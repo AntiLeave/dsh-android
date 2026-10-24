@@ -1,0 +1,5 @@
+- insert:
+    - id: android-compat
+      name: /data/data/com.termux/files/home/.dsh/plugins/android-compat.mjs
+    - id: android-cua
+      name: /data/data/com.termux/files/home/.dsh/plugins/android-tool.mjs

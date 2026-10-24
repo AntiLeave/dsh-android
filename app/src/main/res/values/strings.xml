@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="app_name">DSH Bridge</string>
+  <string name="service_name">DSH Accessibility Bridge</string>
+  <string name="accessibility_description">Reads the active screen and performs taps, swipes, text input, and global actions for the DeepSeek Harness agent running in Termux. It listens on 127.0.0.1:17654.</string>
+</resources>
