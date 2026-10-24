@@ -8,6 +8,7 @@
 const BASE = 'http://127.0.0.1:17654'
 const ATTACHMENT_ENTRY =
   'file:///data/data/com.termux/files/usr/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-attachment/lib/index.js'
+const NO_ROOT = process.env.DSH_ANDROID_NO_ROOT === '1'
 
 async function bridge(path, init = {}) {
   const timeoutMs = typeof init.timeoutMs === 'number' ? init.timeoutMs : 30000
@@ -226,6 +227,15 @@ export function apply(ctx) {
           return `${result.message}`
         }
         case 'launch': {
+          if (NO_ROOT) {
+            if (!args.package && !args.app) throw new Error('launch needs package or app')
+            const result = await act({
+              op: 'launch',
+              ...(args.package === undefined ? {} : { package: args.package }),
+              ...(args.app === undefined ? {} : { app: args.app }),
+            })
+            return `${result.message}`
+          }
           let pkg = args.package
           if (!pkg && args.app) {
             const apps = await bridge('/apps', { signal: exec.signal })
@@ -245,6 +255,10 @@ export function apply(ctx) {
         }
         case 'open_url': {
           if (!args.url) throw new Error('open_url needs url')
+          if (NO_ROOT) {
+            const result = await act({ op: 'openUrl', url: args.url })
+            return `${result.message}`
+          }
           const opened = await runShell(
             `am start -a android.intent.action.VIEW -d ${shellQuote(args.url)}`,
             exec.signal,
@@ -372,7 +386,7 @@ export function apply(ctx) {
     },
   })
 
-  ctx.tools.register({
+  if (!NO_ROOT) ctx.tools.register({
     name: 'android_shell',
     description:
       'Run an arbitrary root shell command on the Android device through Termux su. Use this for capabilities the accessibility bridge does not expose: input keyevent, screencap, am/pm/settings/svc, dumpsys, file access. Requires the Termux app to hold Magisk root. Returns exit code, stdout and stderr.',
@@ -413,5 +427,9 @@ export function apply(ctx) {
     },
   })
 
-  console.log('[android-cua] registered android_state, android_act, android_apps, android_screenshot, android_shell, android_health')
+  console.log(
+    NO_ROOT
+      ? '[android-cua] registered android_state, android_act, android_apps, android_screenshot, android_health (no-root)'
+      : '[android-cua] registered android_state, android_act, android_apps, android_screenshot, android_shell, android_health',
+  )
 }
