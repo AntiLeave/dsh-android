@@ -50,6 +50,12 @@ if (tools.has('android_virtual_screen')) {
   if (virtualDisplayId) {
     await run('android_screenshot', { displayId: virtualDisplayId, maxWidth: 360, quality: 60 }, (_text, value) => value && existsSync(value.path) && statSync(value.path).size > 0)
     await run('android_virtual_screen', { op: 'status' }, text => text.includes('"active": true'))
+    await run('android_act', { op: 'launch', package: 'com.android.chrome', displayId: virtualDisplayId, force: true }, text => text.includes(`launch com.android.chrome on display ${virtualDisplayId}`) && text.includes('exit=0') && !text.includes('Failure calling service activity'))
+    await run('android_state', { displayId: virtualDisplayId }, text => text.includes('com.android.chrome'))
+    await run('android_act', { op: 'keyevent', key: 'enter', displayId: virtualDisplayId }, text => text.includes('exit=0'))
+    await run('android_act', { op: 'open_url', url: 'https://www.baidu.com/', displayId: virtualDisplayId }, text => text.includes(`on display ${virtualDisplayId}`))
+    await run('android_act', { op: 'launch', package: 'com.android.chrome', displayId: virtualDisplayId }, text => text.includes('exit=0') && !text.includes('Stopping:') && !text.includes('Failure calling service activity'))
+    await run('android_screenshot', { displayId: virtualDisplayId, maxWidth: 360, quality: 60 }, (_text, value) => value && existsSync(value.path) && statSync(value.path).size > 0)
     await run('android_virtual_screen', { op: 'stop' }, text => text.includes('stopped'))
   }
 }

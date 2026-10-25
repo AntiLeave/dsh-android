@@ -42,21 +42,38 @@ function shellQuote(value) {
 
 async function runShell(command, signal, timeoutMs = 30000) {
   const { execFile } = await import('node:child_process')
+  const { mkdirSync, mkdtempSync, readFileSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
   const env = { ...process.env }
   delete env.LD_LIBRARY_PATH
   delete env.LD_PRELOAD
   const timeout = Math.max(1000, Math.min(120000, timeoutMs))
-  return await new Promise(resolve => {
-    execFile(
-      'su',
-      ['-c', command],
-      { timeout, maxBuffer: 4 * 1024 * 1024, signal, env },
-      (error, stdout, stderr) => {
-        const code = error ? (error.killed ? 'timeout' : (error.code ?? 1)) : 0
-        resolve({ code, output: `${stdout ?? ''}${stderr ?? ''}`.trim() })
-      },
-    )
-  })
+  const base = process.env.HOME ? join(process.env.HOME, '.dsh-tmp') : tmpdir()
+  mkdirSync(base, { recursive: true, mode: 0o700 })
+  const dir = mkdtempSync(join(base, 'android-shell-'))
+  const stdoutPath = join(dir, 'stdout')
+  const stderrPath = join(dir, 'stderr')
+  const wrapped = `(${command}) </dev/null >${shellQuote(stdoutPath)} 2>${shellQuote(stderrPath)}`
+  try {
+    return await new Promise(resolve => {
+      execFile(
+        'su',
+        ['-c', wrapped],
+        { timeout, maxBuffer: 4 * 1024 * 1024, signal, env, stdio: 'ignore' },
+        error => {
+          let stdout = ''
+          let stderr = ''
+          try { stdout = readFileSync(stdoutPath, 'utf8') } catch {}
+          try { stderr = readFileSync(stderrPath, 'utf8') } catch {}
+          const code = error ? (error.killed ? 'timeout' : (error.code ?? 1)) : 0
+          resolve({ code, output: `${stdout}${stderr}`.trim() })
+        },
+      )
+    })
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 }
 async function runBridgeShell(command, signal, timeoutMs = 30000) {
   const result = await bridge('/shell', {
@@ -67,6 +84,73 @@ async function runBridgeShell(command, signal, timeoutMs = 30000) {
     timeoutMs,
   })
   return { code: result.code, output: result.output ?? '' }
+}
+
+async function runShellForMode(command, signal, timeoutMs = 30000) {
+  return NO_ROOT
+    ? runBridgeShell(command, signal, timeoutMs)
+    : runShell(command, signal, timeoutMs)
+}
+
+async function displayPackage(displayId, signal) {
+  try {
+    const state = await bridge(`/state?maxDepth=1&maxElements=1&displayId=${displayId}`, { signal })
+    return String(state.package ?? '')
+  } catch {
+    return ''
+  }
+}
+
+async function waitForDisplayPackage(displayId, packageName, signal) {
+  for (let i = 0; i < 8; i++) {
+    await new Promise(resolve => setTimeout(resolve, 300))
+    if (await displayPackage(displayId, signal) === packageName) return true
+  }
+  return false
+}
+
+async function launchOnDisplay(displayId, packageName, signal, force = false) {
+  const command = `am start --display ${displayId} -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p ${shellQuote(packageName)}`
+  if (force) {
+    const launched = await runShellForMode(`am force-stop ${shellQuote(packageName)}; ${command}`, signal, 15000)
+    await waitForDisplayPackage(displayId, packageName, signal)
+    return launched
+  }
+  const launched = await runShellForMode(command, signal, 15000)
+  if (await waitForDisplayPackage(displayId, packageName, signal)) return launched
+  return {
+    code: launched.code,
+    output: `${launched.output}\nwarning: ${packageName} is not active on display ${displayId}; use force: true to restart it there`.trim(),
+  }
+}
+
+async function openUrlOnDisplay(displayId, url, packageHint, signal) {
+  const displayArg = displayId === 0 ? '' : ` --display ${displayId}`
+  const opened = await runShellForMode(
+    `am start${displayArg} -a android.intent.action.VIEW -d ${shellQuote(url)}`,
+    signal,
+    15000,
+  )
+  if (opened.code !== 0 || displayId === 0) return opened
+  let packageName = packageHint
+  if (!packageName) {
+    const resolved = await runShellForMode(
+      `cmd package resolve-activity --brief -a android.intent.action.VIEW -d ${shellQuote(url)}`,
+      signal,
+      15000,
+    )
+    packageName = /([A-Za-z0-9_.]+)\/[A-Za-z0-9_.$]+/u.exec(resolved.output)?.[1]
+  }
+  if (!packageName) return opened
+  const relaunched = await runShellForMode(
+    `am start --display ${displayId} -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p ${shellQuote(packageName)}`,
+    signal,
+    15000,
+  )
+  return {
+    code: relaunched.code === 0 ? opened.code : relaunched.code,
+    output: `${opened.output}\n${relaunched.output}`.trim(),
+  }
 }
 
 function androidShellMode(ctx, exec) {
@@ -121,6 +205,36 @@ function number(value, fallback) {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
 }
 
+const keyCodes = {
+  back: 4,
+  home: 3,
+  recents: 187,
+  enter: 66,
+  tab: 61,
+  space: 62,
+  escape: 111,
+  delete: 67,
+  forward_delete: 112,
+  volume_up: 24,
+  volume_down: 25,
+  power: 26,
+  wakeup: 224,
+  sleep: 223,
+  menu: 82,
+  search: 84,
+  page_up: 92,
+  page_down: 93,
+}
+
+function keyCode(args) {
+  const explicit = number(args.keyCode, NaN)
+  if (Number.isFinite(explicit) && explicit > 0) return Math.trunc(explicit)
+  const key = String(args.key ?? 'enter').toLowerCase()
+  const mapped = keyCodes[key] ?? (/^\d+$/u.test(key) ? Number(key) : NaN)
+  if (!Number.isFinite(mapped) || mapped <= 0) throw new Error(`unsupported keyevent ${key}`)
+  return mapped
+}
+
 const commonTarget = {
   id: { type: 'number', description: 'Element id from the latest android_state result.' },
   text: { type: 'string', description: 'Visible text to match when id is omitted.' },
@@ -143,6 +257,8 @@ const actParameters = {
         'swipe',
         'tap',
         'global',
+        'keyevent',
+        'enter',
         'launch',
         'open_url',
         'clipboard',
@@ -168,8 +284,20 @@ const actParameters = {
       type: 'string',
       description: 'Global action: back, home, recents, notifications, quick_settings, power_dialog.',
     },
+    key: {
+      type: 'string',
+      description: 'Key name for keyevent: enter, back, home, tab, escape, delete, volume_up, volume_down, power, etc.',
+    },
+    keyCode: {
+      type: 'number',
+      description: 'Android keycode for keyevent; overrides key when set.',
+    },
     package: { type: 'string', description: 'Android package name for launch/wait.' },
     app: { type: 'string', description: 'Application label for launch when package is omitted.' },
+    force: {
+      type: 'boolean',
+      description: 'For launch on a secondary display, force-stop the package before starting it there. Default false; normal launch never force-stops an already running app.',
+    },
     url: { type: 'string', description: 'URL for open_url.' },
     timeoutMs: { type: 'number', description: 'Timeout for wait, default 8000.' },
     click: { type: 'boolean', description: 'For find, click the matched node.' },
@@ -213,7 +341,7 @@ export function apply(ctx) {
   ctx.tools.register({
     name: 'android_act',
     description:
-      'Perform one Android UI action through the accessibility bridge. Use id from the latest android_state, or text/desc/viewId. Ops: click, long_click, set_text, type_text, clear_text, scroll, swipe, tap, global, launch, open_url, clipboard, wait, find. The result reports dispatched=true, not verified; read android_state again to verify.',
+      'Perform one Android UI action through the accessibility bridge. Use id from the latest android_state, or text/desc/viewId. Ops: click, long_click, set_text, type_text, clear_text, scroll, swipe, tap, global, keyevent, enter, launch, open_url, clipboard, wait, find. The result reports dispatched=true, not verified; read android_state again to verify.',
     parameters: actParameters,
     output: {
       schema: { type: 'string' },
@@ -288,16 +416,16 @@ export function apply(ctx) {
           const result = await actOn({ op: 'global', action: args.global ?? 'back' })
           return `${result.message}`
         }
+        case 'keyevent':
+        case 'enter': {
+          const code = op === 'enter' ? 66 : keyCode(args)
+          const command = `input${displayId === 0 ? '' : ` -d ${displayId}`} keyevent ${code}`
+          const result = NO_ROOT
+            ? await runBridgeShell(command, exec.signal, 15000)
+            : await runShell(command, exec.signal, 15000)
+          return `exit=${result.code}\n${result.output}`
+        }
         case 'launch': {
-          if (NO_ROOT) {
-            if (!args.package && !args.app) throw new Error('launch needs package or app')
-            const result = await actOn({
-              op: 'launch',
-              ...(args.package === undefined ? {} : { package: args.package }),
-              ...(args.app === undefined ? {} : { app: args.app }),
-            })
-            return `${result.message}`
-          }
           let pkg = args.package
           if (!pkg && args.app) {
             const apps = await bridge('/apps', { signal: exec.signal })
@@ -309,12 +437,20 @@ export function apply(ctx) {
           }
           if (!pkg) throw new Error('launch needs package, or an app label that matches an installed app')
           if (displayId !== 0) {
-            const launched = await runShell(
-              `am start --display ${displayId} -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p ${shellQuote(pkg)} 2>&1`,
-              exec.signal,
-              15000,
-            )
-            return `launch ${pkg} on display ${displayId} exit=${launched.code}\n${launched.output}`
+            try {
+              const launched = await launchOnDisplay(displayId, pkg, exec.signal, args.force === true)
+              return `launch ${pkg} on display ${displayId} exit=${launched.code}\n${launched.output}`
+            } catch (error) {
+              if (NO_ROOT) {
+                const result = await actOn({ op: 'launch', package: pkg })
+                return `${result.message}`
+              }
+              throw error
+            }
+          }
+          if (NO_ROOT) {
+            const result = await actOn({ op: 'launch', package: pkg })
+            return `${result.message}`
           }
           const launched = await runShell(
             `monkey -p ${pkg} -c android.intent.category.LAUNCHER 1 2>&1`,
@@ -325,18 +461,17 @@ export function apply(ctx) {
         }
         case 'open_url': {
           if (!args.url) throw new Error('open_url needs url')
-          if (NO_ROOT) {
+          if (NO_ROOT && displayId === 0) {
             const result = await actOn({ op: 'openUrl', url: args.url })
             return `${result.message}`
           }
-          const displayArg = displayId === 0 ? '' : ` --display ${displayId}`
-          const opened = await runShell(
-            `am start${displayArg} -a android.intent.action.VIEW -d ${shellQuote(args.url)}`,
-            exec.signal,
-            15000,
-          )
-          if (opened.code === 0) {
-            return `opened ${args.url}${displayId === 0 ? '' : ` on display ${displayId}`}\n${opened.output}`
+          try {
+            const opened = await openUrlOnDisplay(displayId, args.url, args.package, exec.signal)
+            if (opened.code === 0) {
+              return `opened ${args.url}${displayId === 0 ? '' : ` on display ${displayId}`}\n${opened.output}`
+            }
+          } catch (error) {
+            if (!NO_ROOT) throw error
           }
           const result = await actOn({ op: 'openUrl', url: args.url })
           return `${result.message}`

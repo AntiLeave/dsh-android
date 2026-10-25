@@ -250,7 +250,7 @@ bash install-noroot.sh -uninstall  # 清理插件/compat/启动脚本；不卸�
 | 工具 | 作用 |
 |---|---|
 | `android_state` | 读取当前无障碍树、前台包名、元素 id/文本/坐标 |
-| `android_act` | 点击、长按、setText、滚动、滑动、全局动作、启动 App、等待、查找 |
+| `android_act` | 点击、长按、setText、滚动、滑动、全局动作、keyevent/enter、启动 App、等待、查找 |
 | `android_apps` | 列出可启动应用 |
 | `android_screenshot` | 无障碍截图，保存 JPEG；有附件存储时可附加图片；支持 `displayId` |
 | `android_virtual_screen` | 创建/停止/查询无头虚拟显示；返回 `displayId` |
@@ -282,6 +282,10 @@ bash install-noroot.sh -uninstall  # 清理插件/compat/启动脚本；不卸�
 ```
 
 ```json
+{"op": "keyevent", "key": "enter", "displayId": 15}
+```
+
+```json
 {"command": "input keyevent 26", "description": "按电源键锁屏"}
 ```
 
@@ -290,7 +294,7 @@ bash install-noroot.sh -uninstall  # 清理插件/compat/启动脚本；不卸�
 - 每次操作前先 `android_state`，操作后重新读取验证
 - element id 只对最近一次 state 有效
 - 无障碍点击失败时，`android_act` 会尝试坐标点击
-- 无障碍做不到的按键、系统命令用 `android_shell`：root 走 `su`，no-root 走 Shizuku
+- 按键用 `android_act` 的 `keyevent` / `enter`；其他系统命令用 `android_shell`：root 走 `su`，no-root 走 Shizuku
 
 ## 虚拟屏幕
 
@@ -338,6 +342,8 @@ displayId=15 1280x720 160dpi name=dsh-virtual
 - 显示为 public + own-content + presentation + touch + destroy-content-on-removal，headless；不会显示在物理屏幕上
 - `android_state`、`android_act`、`android_screenshot` 的 `displayId` 默认是 0（物理屏）
 - `launch` / `open_url` 在 root 模式用 `am start --display`，no-root 模式通过 Bridge 调用 Shizuku 执行同样的命令
+- `launch` 默认不会强制重启应用；如果目标应用不在该虚拟屏，会返回 warning，需要重启并拉过去时显式传 `force: true`
+- `open_url` 打开后会再次拉起目标应用，避免 Chrome 等应用把任务留在物理屏导致截图全黑；这一步也不执行 `force-stop`
 - 虚拟屏没有系统桌面/状态栏；直接 `launch` 目标应用即可
 - 首次创建后请使用返回的 `displayId`；id 每次创建可能不同
 - `stop` 会释放虚拟屏并销毁上面的应用；不会把任务搬到主屏
@@ -616,6 +622,7 @@ dsh 重启或插件重载会轮换 token。查看：
 - `read_image` / 截图进入模型需要模型支持图片输入
 - dsh 版本固定在 `0.2.1-rc.2`，Node 24；升级 dsh 可能需要重新适配 koffi/node-pty/sharp
 - 无 root 模式不提供 root shell；`android_shell` 走 Shizuku，`launch` / `open_url` 依赖 Bridge/Shizuku
+- root 模式 `android_shell` 会把 `su` 的 stdin/stdout/stderr 重定向到临时文件；手动执行 `su -c "am ..."` 若遇到 `Failed transaction` 或 avc denial，也需要加 `</dev/null >/dev/null 2>&1`
 - 无 root 模式不会自动安装 APK、启用无障碍或修改 appops；这些需要手动完成
 - 虚拟屏启动应用必须使用 Shizuku/root；no-root 无 Shizuku 时 Bridge 启动其他应用会被 Android 权限拒绝
 - 虚拟屏是 public display；主屏锁屏时虚拟屏也会显示 keyguard，需先解锁；息屏后没有可操作窗口
