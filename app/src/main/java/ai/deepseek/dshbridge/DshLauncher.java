@@ -34,7 +34,7 @@ final class DshLauncher {
   private DshLauncher() {
   }
 
-  static void startRoot(final Callback callback, final int port) {
+  static void startRoot(final Callback callback, final String host, final int port) {
     new Thread(new Runnable() {
       @Override
       public void run() {
@@ -52,7 +52,7 @@ final class DshLauncher {
               CommandResult start = su(
                   "pkill -f '[.]dsh/android.cordis.yml' 2>/dev/null || true; "
                       + "sleep 1; : > " + ROOT_LOG + "; rm -f " + ROOT_HOME + "/dsh-root.pid; "
-                      + "DSH_WEB_HOST=127.0.0.1 DSH_WEB_PORT=" + port + " "
+                      + "DSH_WEB_HOST=" + shellQuote(host) + " DSH_WEB_PORT=" + port + " "
                       + "sh " + ROOT_SCRIPT,
                   20);
               if (!start.ok()) {
@@ -66,11 +66,11 @@ final class DshLauncher {
                   lastLog = tail.output;
                   callback.onProgress(lastLog);
                   url = findUrl(lastLog);
-                  if (url != null && portOpen(port)) break;
+                  if (url != null && portOpen(host, port)) break;
                 }
                 callback.onProgress(lastLog);
-                if (url == null || !portOpen(port)) {
-                  error = "dsh did not start listening on 127.0.0.1:" + port + ".";
+                if (url == null || !portOpen(host, port)) {
+                  error = "dsh did not start listening on " + clientHost(host) + ":" + port + ".";
                   url = null;
                 }
               }
@@ -84,7 +84,7 @@ final class DshLauncher {
     }, "dsh-root-start").start();
   }
 
-  static void startNoRoot(final Context context, final Callback callback, final int port) {
+  static void startNoRoot(final Context context, final Callback callback, final String host, final int port) {
     new Thread(new Runnable() {
       @Override
       public void run() {
@@ -108,7 +108,7 @@ final class DshLauncher {
           if (error == null) {
             clearDshUrl();
             try {
-              sendTermuxCommand(context, noRootStartCommand(port));
+              sendTermuxCommand(context, noRootStartCommand(host, port));
             } catch (Throwable throwable) {
               error = "Could not start Termux command.\n"
                   + throwable.getClass().getSimpleName() + ": " + throwable.getMessage();
@@ -169,19 +169,19 @@ final class DshLauncher {
     context.startService(intent);
   }
 
-  private static String noRootStartCommand(int port) {
+  private static String noRootStartCommand(String host, int port) {
     return "pkill -f '[.]dsh-noroot/android.cordis.yml' 2>/dev/null || true\n"
         + "sleep 1\n"
         + ": > \"$HOME/dsh.log\"\n"
         + "[ -f \"$HOME/.dsh-noroot/start-dsh.sh\" ] || exit 2\n"
-        + "DSH_WEB_HOST=127.0.0.1 DSH_WEB_PORT=" + port
+        + "DSH_WEB_HOST=" + shellQuote(host) + " DSH_WEB_PORT=" + port
         + " bash \"$HOME/.dsh-noroot/start-dsh.sh\"\n"
         + "i=0\n"
         + "while [ \"$i\" -lt 90 ]; do\n"
         + "  LINE=$(grep 'dsh web:' \"$HOME/dsh.log\" 2>/dev/null | tail -1)\n"
         + "  TOKEN=$(printf '%s' \"$LINE\" | sed -n 's/.*token=\\([A-Za-z0-9_-]*\\).*/\\1/p')\n"
         + "  if [ -n \"$TOKEN\" ]; then\n"
-        + "    curl -fsS -X POST --data-binary \"http://127.0.0.1:" + port
+        + "    curl -fsS -X POST --data-binary \"http://" + clientHost(host) + ":" + port
         + "/?token=$TOKEN\" \"http://127.0.0.1:17654/dsh/register\""
         + " >/dev/null 2>&1 || true\n"
         + "    exit 0\n"
@@ -284,12 +284,29 @@ final class DshLauncher {
       Matcher matcher = URL_PATTERN.matcher(line);
       while (matcher.find()) found = matcher.group();
     }
-    return found;
+    return clientUrl(found);
   }
 
-  private static boolean portOpen(int port) {
+  private static String clientHost(String host) {
+    if ("0.0.0.0".equals(host) || "::".equals(host) || "[::]".equals(host)) {
+      return "127.0.0.1";
+    }
+    return host;
+  }
+
+  private static String clientUrl(String url) {
+    if (url == null) return null;
+    return url.replaceFirst("^http://0\\.0\\.0\\.0:", "http://127.0.0.1:")
+        .replaceFirst("^http://\\[::\\]:", "http://127.0.0.1:");
+  }
+
+  private static String shellQuote(String value) {
+    return "'" + value.replace("'", "'\\''") + "'";
+  }
+
+  private static boolean portOpen(String host, int port) {
     try (Socket socket = new Socket()) {
-      socket.connect(new InetSocketAddress("127.0.0.1", port), 800);
+      socket.connect(new InetSocketAddress(clientHost(host), port), 800);
       return true;
     } catch (IOException ignored) {
       return false;

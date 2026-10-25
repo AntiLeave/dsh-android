@@ -32,6 +32,7 @@ public final class MainActivity extends Activity {
   private static final String PREFS = "dsh";
   private static final String PREF_URL = "root_url";
   private static final String PREF_PORT = "port";
+  private static final String PREF_HOST = "host";
   private static final String PREF_MODE = "mode";
 
   private TextView status;
@@ -40,6 +41,7 @@ public final class MainActivity extends Activity {
   private Button stopDsh;
   private Button openDsh;
   private Button copyUrl;
+  private EditText hostInput;
   private EditText portInput;
   private SharedPreferences preferences;
   private String dshUrl = "";
@@ -54,8 +56,12 @@ public final class MainActivity extends Activity {
     dshUrl = preferences.getString(PREF_URL, "");
     dshMode = preferences.getString(PREF_MODE, "");
     int defaultPort = 3080;
+    String defaultHost = "127.0.0.1";
     Uri storedUrl = Uri.parse(dshUrl);
     if (storedUrl.getPort() > 0) defaultPort = storedUrl.getPort();
+    if (storedUrl.getHost() != null && !storedUrl.getHost().isEmpty()) {
+      defaultHost = storedUrl.getHost();
+    }
 
     ScrollView scroll = new ScrollView(this);
     scroll.setBackgroundColor(getColor(R.color.app_background));
@@ -71,11 +77,26 @@ public final class MainActivity extends Activity {
     title.setGravity(Gravity.START);
     root.addView(title, matchWrap());
 
+    TextView hostLabel = new TextView(this);
+    hostLabel.setText("Web UI host");
+    hostLabel.setTextSize(14);
+    hostLabel.setTextColor(getColor(R.color.label_color));
+    hostLabel.setPadding(0, dp(16), 0, 0);
+    root.addView(hostLabel, matchWrap());
+
+    hostInput = new EditText(this);
+    hostInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+    hostInput.setSingleLine(true);
+    hostInput.setSelectAllOnFocus(true);
+    hostInput.setTextColor(getColor(R.color.text_primary));
+    hostInput.setText(preferences.getString(PREF_HOST, defaultHost));
+    root.addView(hostInput, matchWrap());
+
     TextView portLabel = new TextView(this);
     portLabel.setText("Web UI port");
     portLabel.setTextSize(14);
     portLabel.setTextColor(getColor(R.color.label_color));
-    portLabel.setPadding(0, dp(16), 0, 0);
+    portLabel.setPadding(0, dp(12), 0, 0);
     root.addView(portLabel, matchWrap());
 
     portInput = new EditText(this);
@@ -186,6 +207,8 @@ public final class MainActivity extends Activity {
   }
 
   private void startRootDsh() {
+    final String host = readHost();
+    if (host == null) return;
     final int port = readPort();
     if (port < 0) return;
     dshBusy = true;
@@ -227,10 +250,12 @@ public final class MainActivity extends Activity {
           }
         });
       }
-    }, port);
+    }, host, port);
   }
 
   private void startNoRootDsh() {
+    final String host = readHost();
+    if (host == null) return;
     final int port = readPort();
     if (port < 0) return;
     dshBusy = true;
@@ -265,7 +290,7 @@ public final class MainActivity extends Activity {
           }
         });
       }
-    }, port);
+    }, host, port);
   }
 
   private void stopDsh() {
@@ -302,6 +327,16 @@ public final class MainActivity extends Activity {
     } else {
       DshLauncher.stopRoot(callback);
     }
+  }
+
+  private String readHost() {
+    String host = hostInput.getText().toString().trim();
+    if (!host.matches("[A-Za-z0-9._:\\[\\]-]+")) {
+      status.setText("Enter a valid Web UI host.");
+      return null;
+    }
+    preferences.edit().putString(PREF_HOST, host).apply();
+    return host;
   }
 
   private int readPort() {
@@ -356,6 +391,7 @@ public final class MainActivity extends Activity {
     startRoot.setEnabled(!dshBusy);
     startShizuku.setEnabled(!dshBusy);
     stopDsh.setEnabled(!dshBusy);
+    hostInput.setEnabled(!dshBusy);
     portInput.setEnabled(!dshBusy);
     copyUrl.setEnabled(!dshBusy && !dshUrl.isEmpty());
     openDsh.setEnabled(!dshBusy && !dshUrl.isEmpty());
