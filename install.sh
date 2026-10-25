@@ -7,6 +7,7 @@ PLUGIN="$DIR/dsh-plugin"
 COMPAT="$DIR/compat"
 SETUP="$DIR/deploy/setup-termux.sh"
 TEXEC="$DIR/scripts/termux-exec.sh"
+RIPGREP="$DIR/scripts/ensure-ripgrep.sh"
 START="$DIR/scripts/start-dsh-root.sh"
 BRIDGE=ai.deepseek.dshbridge
 BRIDGE_SERVICE=ai.deepseek.dshbridge/ai.deepseek.dshbridge.BridgeService
@@ -63,7 +64,8 @@ run_root() {
 prepare_scripts() {
   cp "$TEXEC" /data/local/tmp/termux-exec.sh
   cp "$START" /data/local/tmp/start-dsh-root.sh
-  chmod 666 /data/local/tmp/termux-exec.sh /data/local/tmp/start-dsh-root.sh
+  cp "$RIPGREP" /data/local/tmp/ensure-ripgrep.sh
+  chmod 666 /data/local/tmp/termux-exec.sh /data/local/tmp/start-dsh-root.sh /data/local/tmp/ensure-ripgrep.sh
 }
 
 do_stop() {
@@ -87,7 +89,7 @@ do_uninstall() {
   if [ -f "$TEXEC" ]; then
     run_root 'rm -rf "$HOME/.dsh/plugins" "$HOME/.dsh/compat"; rm -f "$HOME/.dsh/android.cordis.yml" "$HOME/.dsh-setup.done" "$HOME/.dsh-setup.failed" "$HOME/.dsh-setup.sh" "$HOME/.dsh-deploy.tar.gz" "$HOME/dsh-root.log" "$HOME/dsh-root.pid"' >/dev/null 2>&1 || true
   fi
-  rm -f /data/local/tmp/termux-exec.sh /data/local/tmp/start-dsh-root.sh /data/local/tmp/dsh-deploy.tar.gz
+  rm -f /data/local/tmp/termux-exec.sh /data/local/tmp/start-dsh-root.sh /data/local/tmp/ensure-ripgrep.sh /data/local/tmp/dsh-deploy.tar.gz
   rm -rf /data/local/tmp/dsh-deploy-root
   echo "removed DSH Android integration (Termux, Node, dsh and sessions kept)"
   rm -rf "$DIR"
@@ -262,6 +264,10 @@ start_dsh() {
   echo "http://$HOST:$PORT/?token=$TOKEN"
 }
 
+ensure_ripgrep() {
+  run_root 'bash /data/local/tmp/ensure-ripgrep.sh' >/dev/null 2>&1 || true
+}
+
 do_install() {
   prepare_scripts
   install_bridge
@@ -271,6 +277,7 @@ do_install() {
     allow_external_apps
     run_setup || exit 1
   fi
+  ensure_ripgrep
   start_dsh || exit 1
 }
 
@@ -282,7 +289,7 @@ case "$ACTION" in
     install_bridge
     ensure_termux
     wait_termux || exit 1
-    if setup_done; then start_dsh; else do_install; fi
+    if setup_done; then ensure_ripgrep; start_dsh; else do_install; fi
     ;;
   install) do_install ;;
 esac

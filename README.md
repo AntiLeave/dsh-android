@@ -543,6 +543,10 @@ $PREFIX/lib/node_modules/@deepseek-ai/dsh/node_modules/@img/sharp-wasm32
 
 `start-dsh-root.sh` 和 `start-dsh.sh` 都已设置 `DSH_PERMISSION_MODE=danger-full-access`。如果手动启动，需要自己设置。
 
+**`glob` / `grep` 不可用 / 缺少 `@vscode/ripgrep-android-arm64`**
+
+安装脚本现在会安装 Termux `ripgrep` 并生成 `@vscode/ripgrep-android-arm64` 平台包。升级 dsh 后重新执行安装脚本或 `bash scripts/ensure-ripgrep.sh`，然后重启 dsh（旧进程会缓存失败路径）。
+
 **`android_apps` 只有一个应用**
 
 MIUI/HyperOS 未允许“获取应用列表”。root 安装器会自动设置；无 root 或手动安装时请执行（或到应用权限页开启）：

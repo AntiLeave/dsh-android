@@ -207,6 +207,10 @@ check_bridge() {
   fi
 }
 
+ensure_ripgrep() {
+  bash "$DIR/scripts/ensure-ripgrep.sh"
+}
+
 check_shizuku() {
   if ! command -v curl >/dev/null 2>&1; then
     return 0
@@ -228,6 +232,7 @@ check_shizuku() {
 do_install() {
   open_bridge_installer
   setup_termux
+  ensure_ripgrep
   wake_lock
   start_dsh
   check_bridge
@@ -253,6 +258,7 @@ case "$ACTION" in
       || [ ! -f "$HOME/.dsh-setup.done" ] || [ ! -f "$DSH/lib/bin.js" ]; then
       do_install
     else
+      ensure_ripgrep
       wake_lock
       start_dsh
       check_bridge

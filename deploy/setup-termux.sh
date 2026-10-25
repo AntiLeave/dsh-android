@@ -29,7 +29,7 @@ echo "[setup] host=$HOST_URL"
 # 1. Node and build tools
 
 pkg update -y
-pkg install -y nodejs-lts cmake clang make python pkg-config curl tar
+pkg install -y nodejs-lts cmake clang make python pkg-config curl tar ripgrep
 
 node -v
 npm -v
@@ -53,7 +53,23 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 3. plugins, compat bootstrap and Cordis patch
+# 3. ripgrep Android platform package
+
+RG_PLATFORM="$DSH/node_modules/@vscode/ripgrep-android-arm64"
+if [ ! -x "$RG_PLATFORM/bin/rg" ]; then
+  echo "[setup] installing ripgrep for Android"
+  mkdir -p "$RG_PLATFORM/bin"
+  cp "$PREFIX/bin/rg" "$RG_PLATFORM/bin/rg"
+  chmod 755 "$RG_PLATFORM/bin/rg"
+  RG_VERSION=1.18.0
+  if [ -f "$DSH/node_modules/@vscode/ripgrep/package.json" ]; then
+    RG_VERSION=$(node -p "require('$DSH/node_modules/@vscode/ripgrep/package.json').version" 2>/dev/null || echo 1.18.0)
+  fi
+  printf '{"name":"@vscode/ripgrep-android-arm64","version":"%s","os":["android"],"cpu":["arm64"]}\n' "$RG_VERSION" > "$RG_PLATFORM/package.json"
+fi
+
+# ---------------------------------------------------------------------------
+# 4. plugins, compat bootstrap and Cordis patch
 
 mkdir -p "$HOME/.dsh"
 if [ -f "$HOME/.dsh-deploy.tar.gz" ]; then
@@ -66,7 +82,7 @@ elif [ -n "${HOST_URL:-}" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 4. koffi: Android has no prebuilt addon, and bionic has no glibc statx
+# 5. koffi: Android has no prebuilt addon, and bionic has no glibc statx
 
 KOFFI="$DSH/node_modules/koffi"
 KOFFI_BUILD="$(find "$KOFFI/build" -name koffi.node -path '*android_arm64*' 2>/dev/null | head -n 1 || true)"
@@ -94,7 +110,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 5. node-pty: no Android prebuild
+# 6. node-pty: no Android prebuild
 
 PTY="$DSH/node_modules/node-pty"
 if [ "$REBUILD_NATIVE" = "1" ] || [ ! -f "$PTY/build/Release/pty.node" ]; then
@@ -109,7 +125,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 6. sharp WASM fallback: Android has no native sharp binary
+# 7. sharp WASM fallback: Android has no native sharp binary
 
 SHARP_VERSION="$(node -p "require('$DSH/node_modules/sharp/package.json').version")"
 SHARP_DIR="$DSH/node_modules/@img/sharp-wasm32"
@@ -132,7 +148,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 7. record the Node ABI used by the native builds
+# 8. record the Node ABI used by the native builds
 
 printf '%s\n' "$NODE_VERSION" > "$NATIVE_MARKER"
 
