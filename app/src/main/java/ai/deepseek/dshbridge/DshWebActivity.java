@@ -2,9 +2,10 @@ package ai.deepseek.dshbridge;
 
 import android.app.Activity;
 import android.content.Intent;
-import android.graphics.Color;
+import android.content.res.Configuration;
 import android.graphics.Insets;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
 import android.view.WindowInsets;
@@ -43,15 +44,23 @@ public final class DshWebActivity extends Activity {
       return;
     }
     host = parsed.getHost();
+    boolean dark = (getResources().getConfiguration().uiMode
+        & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
+    int background = getColor(R.color.webview_background);
 
     webView = new WebView(this);
-    webView.setBackgroundColor(Color.WHITE);
+    webView.setBackgroundColor(background);
     WebSettings settings = webView.getSettings();
     settings.setJavaScriptEnabled(true);
     settings.setDomStorageEnabled(true);
     settings.setDatabaseEnabled(true);
     settings.setLoadWithOverviewMode(true);
     settings.setUseWideViewPort(true);
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+      settings.setAlgorithmicDarkeningAllowed(dark);
+    } else {
+      settings.setForceDark(dark ? WebSettings.FORCE_DARK_ON : WebSettings.FORCE_DARK_OFF);
+    }
     webView.setWebViewClient(new WebViewClient() {
       @Override
       public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
@@ -65,7 +74,7 @@ public final class DshWebActivity extends Activity {
       }
     });
     FrameLayout container = new FrameLayout(this);
-    container.setBackgroundColor(Color.WHITE);
+    container.setBackgroundColor(background);
     container.addView(webView, new FrameLayout.LayoutParams(
         FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
     setContentView(container);

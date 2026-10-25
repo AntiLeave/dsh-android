@@ -5,7 +5,6 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.graphics.Color;
 import android.graphics.Insets;
 import android.graphics.Typeface;
 import android.net.Uri;
@@ -59,38 +58,31 @@ public final class MainActivity extends Activity {
     if (storedUrl.getPort() > 0) defaultPort = storedUrl.getPort();
 
     ScrollView scroll = new ScrollView(this);
+    scroll.setBackgroundColor(getColor(R.color.app_background));
     LinearLayout root = new LinearLayout(this);
     root.setOrientation(LinearLayout.VERTICAL);
     root.setPadding(dp(20), dp(20), dp(20), dp(20));
-    root.setBackgroundColor(Color.WHITE);
+    root.setBackgroundColor(getColor(R.color.app_background));
 
     TextView title = new TextView(this);
     title.setText("DSH Accessibility Bridge");
     title.setTextSize(24);
-    title.setTextColor(Color.rgb(21, 101, 192));
+    title.setTextColor(getColor(R.color.title_color));
     title.setGravity(Gravity.START);
     root.addView(title, matchWrap());
-
-    TextView help = new TextView(this);
-    help.setText("1. Enable \"DSH Accessibility Bridge\" in Settings > Accessibility.\n"
-        + "2. Choose the Web UI port, then start with root or Shizuku.\n"
-        + "3. Use Open Web UI to open the harness; it never opens automatically.\n"
-        + "4. The bridge listens only on 127.0.0.1:17654.");
-    help.setTextSize(15);
-    help.setTextColor(Color.DKGRAY);
-    help.setPadding(0, dp(14), 0, dp(14));
-    root.addView(help, matchWrap());
 
     TextView portLabel = new TextView(this);
     portLabel.setText("Web UI port");
     portLabel.setTextSize(14);
-    portLabel.setTextColor(Color.DKGRAY);
+    portLabel.setTextColor(getColor(R.color.label_color));
+    portLabel.setPadding(0, dp(16), 0, 0);
     root.addView(portLabel, matchWrap());
 
     portInput = new EditText(this);
     portInput.setInputType(InputType.TYPE_CLASS_NUMBER);
     portInput.setSingleLine(true);
     portInput.setSelectAllOnFocus(true);
+    portInput.setTextColor(getColor(R.color.text_primary));
     portInput.setText(preferences.getString(PREF_PORT, String.valueOf(defaultPort)));
     root.addView(portInput, matchWrap());
 
@@ -176,8 +168,8 @@ public final class MainActivity extends Activity {
 
     status = new TextView(this);
     status.setTextSize(13);
-    status.setTextColor(Color.rgb(220, 230, 220));
-    status.setBackgroundColor(Color.rgb(24, 26, 27));
+    status.setTextColor(getColor(R.color.terminal_text));
+    status.setBackgroundColor(getColor(R.color.terminal_background));
     status.setTypeface(Typeface.MONOSPACE);
     status.setTextIsSelectable(true);
     status.setLongClickable(true);

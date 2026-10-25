@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <color name="app_background">#FF121212</color>
+  <color name="title_color">#FF90CAF9</color>
+  <color name="label_color">#FFBDBDBD</color>
+  <color name="text_primary">#FFF5F5F5</color>
+  <color name="terminal_background">#FF0D1117</color>
+  <color name="terminal_text">#FFE6EDF3</color>
+  <color name="webview_background">#FF121212</color>
+</resources>
