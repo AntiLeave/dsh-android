@@ -450,7 +450,6 @@ Bridge 默认只监听 `127.0.0.1:17654`：
 `start-dsh-root.sh` 使用：
 
 ```sh
-DSH_PERMISSION_MODE=danger-full-access
 node --expose-internals \
   --import "$HOME/.dsh/compat/bootstrap.mjs" \
   "$PREFIX/lib/node_modules/@deepseek-ai/dsh/lib/bin.js" --profile web \
@@ -463,10 +462,9 @@ node --expose-internals \
 ```sh
 DSH_HOME="$HOME/.dsh-noroot"
 DSH_ANDROID_NO_ROOT=1
-DSH_PERMISSION_MODE=danger-full-access
 ```
 
-`DSH_ANDROID_NO_ROOT=1` 会让插件跳过 `android_shell`，并让 `android_act` 的 `launch` / `open_url` 使用 Bridge。root 模式的 `start-dsh-root.sh` 会显式清掉这个变量。
+`DSH_ANDROID_NO_ROOT=1` 会让 `android_act` 的 `launch` / `open_url` 使用 Bridge，并让 `android_shell` 走 Shizuku；root 模式的 `start-dsh-root.sh` 会显式清掉这个变量。
 
 `android-compat` 插件负责 Android 上 `fsync("/")` 返回 `EINVAL` 的兼容，否则 `read_image` 和附件写入会失败。
 
@@ -491,8 +489,8 @@ Bridge APK 本身不需要 root。root 主要提升自动化和控制能力：
 ## 安全
 
 - `android_shell` 是任意 shell；root 模式为 root，no-root 为 Shizuku shell（Shizuku 以 root 启动时也是 root）。`danger-full-access` 下插件直接放行，不弹审批；`workspace-write` 下插件为每次调用请求用户批准
-- 无 root 模式通过 Shizuku 暴露 `android_shell`；dsh 仍使用 `danger-full-access`，仍可读写 Termux 用户能访问的文件
-- dsh 默认使用 `danger-full-access`，没有文件沙箱
+- 无 root 模式通过 Shizuku 暴露 `android_shell`；dsh 默认使用 `workspace-write`，文件写入受 workspace 限制
+- dsh 默认使用 `workspace-write`；需要完全访问时可手动设置 `DSH_PERMISSION_MODE=danger-full-access`，但那会跳过审批
 - Bridge 只绑 `127.0.0.1` 但没有鉴权，本机其他 App 也能调用
 - Web UI 用 token 认证；不要把带 token 的 URL 发到不可信环境
 - 建议只在专用测试设备上运行
@@ -549,7 +547,7 @@ $PREFIX/lib/node_modules/@deepseek-ai/dsh/node_modules/@img/sharp-wasm32
 
 **`sandbox mode "workspace-write"` 不可用**
 
-`start-dsh-root.sh` 和 `start-dsh.sh` 都已设置 `DSH_PERMISSION_MODE=danger-full-access`。`android_shell` 在 `danger-full-access` 会话中直接放行；在 `workspace-write` 会话中逐次审批。需要审批时，在 dsh 里选择 `workspace-write` 会话。
+`start-dsh-root.sh` 和 `start-dsh.sh` 不再设置 `DSH_PERMISSION_MODE`，dsh 使用默认 `workspace-write`。`android_shell` 在 `workspace-write` 会话中逐次审批；只有手动设置 `danger-full-access` 时才会全部放行。Android 上 workspace-write 的 bash 沙箱后端可能不可用，shell 操作请使用 `android_shell`。
 
 **`android_shell` 现在需要审批**
 

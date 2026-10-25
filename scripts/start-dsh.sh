@@ -10,7 +10,6 @@ DSH_HOME="$HOME/.dsh-noroot"
 export PATH="$PREFIX/bin:$PATH"
 export DSH_HOME
 export DSH_ANDROID_NO_ROOT=1
-export DSH_PERMISSION_MODE=danger-full-access
 mkdir -p "$DSH_HOME"
 cd "$HOME"
 
