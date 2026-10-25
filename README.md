@@ -191,6 +191,8 @@ bash install-noroot.sh -stop       # 停止 dsh；无障碍服务保持启用
 bash install-noroot.sh -uninstall  # 清理插件/compat/启动脚本；不卸载 Bridge
 ```
 
+`install-noroot.sh` 必须在 Termux 里用 `bash` 运行，不能在 adb shell/root shell 里执行 `/data/local/tmp/.../install-noroot.sh`；否则 `pkg` 不在 PATH，setup 会失败。
+
 无 root 模式使用独立目录 `~/.dsh-noroot` 作为 dsh home（`DSH_HOME`），插件、compat、profile 和会话都与 root 模式的 `~/.dsh` 隔离，因此两种模式可以共存，但要用不同端口。首次进入无 root 的 Web UI 也需要重新添加 API Key。`-uninstall` 会保留 `~/.dsh-noroot` 中的会话。
 
 如果 root 模式已占用 3080，无 root 模式请加 `-PORT 3090`，或先停止 root dsh。
@@ -343,7 +345,13 @@ displayId=15 1280x720 160dpi name=dsh-virtual
 注意：
 
 - 物理屏必须处于**解锁且亮屏**状态。锁屏时公共虚拟屏会显示 `ConnectedDisplayKeyguardPresentation`；息屏后虚拟屏没有可操作窗口，应用无法正常前台运行。解锁并亮屏后需要重新 `launch`
-- 部分应用不支持 secondary display，可能仍启动在主屏或拒绝启动\n\n验证主屏不受影响：\n\n1. 在虚拟屏启动前记录 ndroid_state {displayId:0} 和 wm size -d 0\n2. 启动虚拟屏、launch 一个应用、执行 tap/click\n3. 再次读取 ndroid_state {displayId:0}；应仍是原来的主屏包名/activity\n4. 执行 wm size -d 0；主屏尺寸不变\n5. ndroid_virtual_screen stop 后再读取 displayId 0；主屏仍不变\n\nBridge 使用 display-specific window 查询，不会把虚拟屏的焦点窗口当成主屏；虚拟屏退出时带 DESTROY_CONTENT_ON_REMOVAL，不会把虚拟屏任务迁移到主屏。
+- 部分应用不支持 secondary display，可能仍启动在主屏或拒绝启动
+
+验证主屏不受影响：
+
+1. 在虚拟屏启动前记录 ndroid_state {displayId:0} 和 wm size -d 0\n2. 启动虚拟屏、launch 一个应用、执行 tap/click\n3. 再次读取 ndroid_state {displayId:0}；应仍是原来的主屏包名/activity\n4. 执行 wm size -d 0；主屏尺寸不变\n5. ndroid_virtual_screen stop 后再读取 displayId 0；主屏仍不变
+
+Bridge 使用 display-specific window 查询，不会把虚拟屏的焦点窗口当成主屏；虚拟屏退出时带 DESTROY_CONTENT_ON_REMOVAL，不会把虚拟屏任务迁移到主屏。
 - 虚拟屏没有系统装饰和音频；需要使用 `android_act` / `android_screenshot` 操作和观察
 - 如果启动失败，先用 `android_shell` 的 `am start --display <id> ...` 确认；root 模式这是主要启动方式
 

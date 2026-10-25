@@ -15,6 +15,11 @@ DSH_VERSION="${DSH_VERSION:-0.2.1-rc.2}"
 LOG="$HOME/dsh-setup.log"
 MARKER="$HOME/.dsh-setup.done"
 FAIL_MARKER="$HOME/.dsh-setup.failed"
+if [ -z "${PREFIX:-}" ] || [ ! -x "$PREFIX/bin/pkg" ]; then
+  echo "setup-termux.sh must run inside Termux, not /system/bin/sh" >&2
+  exit 1
+fi
+export PATH="$PREFIX/bin:$PATH"
 DSH="$PREFIX/lib/node_modules/@deepseek-ai/dsh"
 NATIVE_MARKER="$HOME/.dsh/.android-native-node-version"
 

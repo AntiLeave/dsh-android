@@ -55,11 +55,13 @@ if [ "$(id -u)" = "0" ]; then
   exit 1
 fi
 
-if [ -z "${PREFIX:-}" ] || [ ! -d "$PREFIX" ] || [ -z "${HOME:-}" ]; then
-  echo "Run this inside Termux: bash install-noroot.sh" >&2
+if [ -z "${PREFIX:-}" ] || [ ! -d "$PREFIX" ] || [ -z "${HOME:-}" ] || [ ! -x "$PREFIX/bin/pkg" ]; then
+  echo "Run this inside Termux with bash, not from /system/bin/sh or /data/local/tmp:" >&2
+  echo "  cd ~/dsh-android && bash install-noroot.sh -HOST 10.0.0.100" >&2
   exit 1
 fi
 
+export PATH="$PREFIX/bin:$PATH"
 DSH="$PREFIX/lib/node_modules/@deepseek-ai/dsh"
 NOHOME="$HOME/.dsh-noroot"
 
@@ -141,7 +143,7 @@ setup_termux() {
     rm -f "$HOME/.dsh-setup.failed"
     deploy_bundle
     echo "running Termux setup (first run can take 10-20 minutes)"
-    ( cd "$HOME" && bash "$SETUP" )
+    ( cd "$HOME" && "$PREFIX/bin/bash" "$SETUP" )
     rm -f "$HOME/.dsh-deploy.tar.gz"
   fi
   deploy_noroot
@@ -208,7 +210,7 @@ check_bridge() {
 }
 
 ensure_ripgrep() {
-  bash "$DIR/scripts/ensure-ripgrep.sh"
+  "$PREFIX/bin/bash" "$DIR/scripts/ensure-ripgrep.sh"
 }
 
 check_shizuku() {
