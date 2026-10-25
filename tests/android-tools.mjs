@@ -3,9 +3,12 @@ import { apply } from '../dsh-plugin/android-tool.mjs'
 
 const NO_ROOT = process.env.DSH_ANDROID_NO_ROOT === '1'
 const tools = new Map()
+let lastApproval
 apply({
   tools: { register: definition => tools.set(definition.name, definition) },
-  get: name => name === 'approval' ? { request: async () => 'allowed-once' } : undefined,
+  get: name => name === 'approval'
+    ? { request: async request => { lastApproval = request; return 'allowed-once' } }
+    : undefined,
   logger: console,
 })
 const exec = { signal: new AbortController().signal }
@@ -28,6 +31,15 @@ async function run(name, args, check) {
 }
 
 console.log('registered: ' + [...tools.keys()].join(', '))
+
+const shellSchema = tools.get('android_shell')?.parameters
+if (shellSchema?.required?.includes('description') && shellSchema.properties?.description?.type === 'string') {
+  console.log('PASS android_shell schema: description is required')
+  passed++
+} else {
+  console.log('FAIL android_shell schema: description is required')
+  failed++
+}
 
 await run('android_health', {}, text => /"ok":\s*true/u.test(text))
 await run('android_apps', {}, text => text.includes('launchable apps'))
@@ -65,9 +77,9 @@ const shot = await run('android_screenshot', { maxWidth: 360, quality: 60 }, (_t
 if (shot) console.log(`screenshot file: ${shot.path} ${shot.width}x${shot.height}`)
 
 if (NO_ROOT) {
-  await run('android_shell', { command: 'id; echo SHIZUKU_OK', timeoutMs: 15000 }, text => text.includes('uid=') && text.includes('SHIZUKU_OK'))
+  await run('android_shell', { command: 'id; echo SHIZUKU_OK', description: 'Check the shell identity for the Android shell test', timeoutMs: 15000 }, text => text.includes('uid=') && text.includes('SHIZUKU_OK') && lastApproval?.reason.includes('Android shell:') && lastApproval?.reason.includes('Command:') && lastApproval?.displayReason?.en.includes('Purpose:'))
 } else {
-  await run('android_shell', { command: 'id; wm size; getprop ro.product.model; am force-stop com.android.settings; input keyevent 3; echo SHELL_OK', timeoutMs: 15000 }, text => text.includes('uid=0') && text.includes('SHELL_OK'))
+  await run('android_shell', { command: 'id; wm size; getprop ro.product.model; am force-stop com.android.settings; input keyevent 3; echo SHELL_OK', description: 'Run root diagnostics and reset Settings to home', timeoutMs: 15000 }, text => text.includes('uid=0') && text.includes('SHELL_OK') && lastApproval?.reason.includes('Android shell:') && lastApproval?.reason.includes('Command:') && lastApproval?.displayReason?.en.includes('Purpose:'))
 }
 
 if (NO_ROOT) {

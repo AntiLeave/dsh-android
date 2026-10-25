@@ -254,7 +254,7 @@ bash install-noroot.sh -uninstall  # 清理插件/compat/启动脚本；不卸�
 | `android_apps` | 列出可启动应用 |
 | `android_screenshot` | 无障碍截图，保存 JPEG；有附件存储时可附加图片；支持 `displayId` |
 | `android_virtual_screen` | 创建/停止/查询无头虚拟显示；返回 `displayId` |
-| `android_shell` | root 模式走 `su`；no-root 模式走 Shizuku shell；`danger-full-access` 下全部放行，`workspace-write` 下每次调用需要 dsh 审批 |
+| `android_shell` | root 模式走 `su`；no-root 模式走 Shizuku shell；`description` 必填并显示在审批弹窗；`danger-full-access` 下全部放行，`workspace-write` 下每次调用需要 dsh 审批 |
 | `android_health` | 检查 Bridge、前台包名、屏幕尺寸 |
 
 无 root 模式注册 7 个工具：`android_shell` 走 Shizuku，`android_virtual_screen` 启动/管理虚拟屏；root 模式走 `su`。`android_act` 的 `launch` 和 `open_url` 会自动改用 Bridge 的 `launch` / `openUrl`。
@@ -282,7 +282,7 @@ bash install-noroot.sh -uninstall  # 清理插件/compat/启动脚本；不卸�
 ```
 
 ```json
-{"command": "input keyevent 26"}
+{"command": "input keyevent 26", "description": "按电源键锁屏"}
 ```
 
 使用约定：
@@ -551,7 +551,7 @@ $PREFIX/lib/node_modules/@deepseek-ai/dsh/node_modules/@img/sharp-wasm32
 
 **`android_shell` 现在需要审批**
 
-`android_shell` 会在 `workspace-write` 会话中逐次请求用户批准；拒绝、取消或无审批通道时不会执行。`danger-full-access` 会话直接放行，不弹审批。
+`android_shell` 会在 `workspace-write` 会话中逐次请求用户批准；`description` 必填，审批弹窗会显示用途和命令。拒绝、取消或无审批通道时不会执行。`danger-full-access` 会话直接放行，不弹审批。
 
 **`glob` / `grep` 不可用 / 缺少 `@vscode/ripgrep-android-arm64`**
 
