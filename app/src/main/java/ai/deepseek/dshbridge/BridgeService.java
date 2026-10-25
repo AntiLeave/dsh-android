@@ -93,6 +93,7 @@ public final class BridgeService extends AccessibilityService {
   private volatile String currentPackage = "";
   private volatile String currentActivity = "";
   private volatile String dshUrl = "";
+  private volatile String dshLog = "";
   private final Map<Integer, String> activities = new ConcurrentHashMap<>();
   private int activeDisplayId = Display.DEFAULT_DISPLAY;
   private final Object virtualDisplayLock = new Object();
@@ -302,10 +303,17 @@ public final class BridgeService extends AccessibilityService {
     }
     if (path.equals("/dsh/clear") && method.equals("POST")) {
       dshUrl = "";
+      dshLog = "";
       return dshStatus();
     }
     if (path.equals("/dsh/register") && method.equals("POST")) {
       return registerDsh(body);
+    }
+    if (path.equals("/dsh/log") && method.equals("POST")) {
+      dshLog = new String(body, StandardCharsets.UTF_8).trim();
+      JSONObject json = new JSONObject();
+      json.put("ok", true);
+      return json;
     }
     if (path.equals("/shizuku")) {
       if (method.equals("POST")) {
@@ -393,6 +401,7 @@ public final class BridgeService extends AccessibilityService {
     JSONObject json = new JSONObject();
     json.put("ok", true);
     json.put("url", dshUrl);
+    json.put("log", dshLog);
     return json;
   }
 

@@ -115,12 +115,19 @@ final class DshLauncher {
             }
           }
           if (error == null) {
+            String lastLog = "";
             long deadline = System.currentTimeMillis() + 180000;
             while (System.currentTimeMillis() < deadline) {
-              url = fetchDshUrl();
+              DshStatus status = fetchDshStatus();
+              if (!status.log.isEmpty()) {
+                lastLog = status.log;
+                callback.onProgress(lastLog);
+              }
+              url = status.url;
               if (url != null && !url.isEmpty()) break;
               Thread.sleep(1000);
             }
+            callback.onProgress(lastLog);
             if (url == null || url.isEmpty()) {
               error = "Timed out waiting for no-root dsh.\n"
                   + "Check Termux allow-external-apps and ~/dsh.log.";
@@ -179,6 +186,11 @@ final class DshLauncher {
         + "i=0\n"
         + "while [ \"$i\" -lt 90 ]; do\n"
         + "  LINE=$(grep 'dsh web:' \"$HOME/dsh.log\" 2>/dev/null | tail -1)\n"
+        + "  LOG=$(tail -n 120 \"$HOME/dsh.log\" 2>/dev/null)\n"
+        + "  if [ -n \"$LOG\" ]; then\n"
+        + "    curl -fsS -X POST --data-binary \"$LOG\" \"http://127.0.0.1:17654/dsh/log\""
+        + " >/dev/null 2>&1 || true\n"
+        + "  fi\n"
         + "  TOKEN=$(printf '%s' \"$LINE\" | sed -n 's/.*token=\\([A-Za-z0-9_-]*\\).*/\\1/p')\n"
         + "  if [ -n \"$TOKEN\" ]; then\n"
         + "    curl -fsS -X POST --data-binary \"http://" + clientHost(host) + ":" + port
@@ -208,19 +220,19 @@ final class DshLauncher {
     }
   }
 
-  private static String fetchDshUrl() {
+  private static DshStatus fetchDshStatus() {
     HttpURLConnection connection = null;
     try {
       connection = (HttpURLConnection) new URL("http://127.0.0.1:17654/dsh/status").openConnection();
       connection.setConnectTimeout(1000);
       connection.setReadTimeout(1000);
-      if (connection.getResponseCode() != 200) return "";
+      if (connection.getResponseCode() != 200) return new DshStatus("", "");
       ByteArrayOutputStream output = new ByteArrayOutputStream();
       drain(connection.getInputStream(), output);
       JSONObject json = new JSONObject(output.toString("UTF-8"));
-      return json.optString("url", "");
+      return new DshStatus(json.optString("url", ""), json.optString("log", ""));
     } catch (Throwable ignored) {
-      return "";
+      return new DshStatus("", "");
     } finally {
       if (connection != null) connection.disconnect();
     }
@@ -310,6 +322,16 @@ final class DshLauncher {
       return true;
     } catch (IOException ignored) {
       return false;
+    }
+  }
+
+  private static final class DshStatus {
+    final String url;
+    final String log;
+
+    DshStatus(String url, String log) {
+      this.url = url == null ? "" : url;
+      this.log = log == null ? "" : log;
     }
   }
 

@@ -41,6 +41,7 @@ public final class MainActivity extends Activity {
   private Button stopDsh;
   private Button openDsh;
   private Button copyUrl;
+  private Button testBridge;
   private EditText hostInput;
   private EditText portInput;
   private SharedPreferences preferences;
@@ -48,6 +49,7 @@ public final class MainActivity extends Activity {
   private String dshMode = "";
   private String lastLog = "";
   private boolean dshBusy;
+  private int statusEpoch;
 
   @Override
   protected void onCreate(Bundle savedInstanceState) {
@@ -167,15 +169,15 @@ public final class MainActivity extends Activity {
     });
     root.addView(accessibility, matchWrap());
 
-    Button refresh = new Button(this);
-    refresh.setText("Test bridge connection");
-    refresh.setOnClickListener(new View.OnClickListener() {
+    testBridge = new Button(this);
+    testBridge.setText("Test bridge connection");
+    testBridge.setOnClickListener(new View.OnClickListener() {
       @Override
       public void onClick(View view) {
         refreshStatus();
       }
     });
-    root.addView(refresh, matchWrap());
+    root.addView(testBridge, matchWrap());
 
     Button copyLog = new Button(this);
     copyLog.setText("Copy log");
@@ -212,6 +214,7 @@ public final class MainActivity extends Activity {
     final int port = readPort();
     if (port < 0) return;
     dshBusy = true;
+    statusEpoch++;
     lastLog = "";
     updateDshButtons();
     status.setText("Starting dsh as root...");
@@ -259,12 +262,20 @@ public final class MainActivity extends Activity {
     final int port = readPort();
     if (port < 0) return;
     dshBusy = true;
+    statusEpoch++;
     lastLog = "";
     updateDshButtons();
     status.setText("Starting dsh through Shizuku/Termux...");
     DshLauncher.startNoRoot(this, new DshLauncher.Callback() {
       @Override
-      public void onProgress(String log) {
+      public void onProgress(final String log) {
+        runOnUiThread(new Runnable() {
+          @Override
+          public void run() {
+            lastLog = log == null ? "" : log;
+            if (!lastLog.isEmpty()) status.setText(lastLog);
+          }
+        });
       }
 
       @Override
@@ -274,9 +285,10 @@ public final class MainActivity extends Activity {
           public void run() {
             dshBusy = false;
             if (error != null) {
-              status.setText(error);
+              status.setText(lastLog.isEmpty() ? error : lastLog);
             } else if (url == null || url.isEmpty()) {
-              status.setText("dsh did not return a Web UI URL.");
+              status.setText(lastLog.isEmpty()
+                  ? "dsh did not return a Web UI URL." : lastLog);
             } else {
               dshUrl = url;
               dshMode = "noroot";
@@ -284,7 +296,8 @@ public final class MainActivity extends Activity {
                   .putString(PREF_URL, dshUrl)
                   .putString(PREF_MODE, dshMode)
                   .apply();
-              status.setText("dsh is running through Shizuku/Termux.\n" + dshUrl);
+              status.setText(lastLog.isEmpty()
+                  ? "dsh is running through Shizuku/Termux.\n" + dshUrl : lastLog);
             }
             updateDshButtons();
           }
@@ -295,6 +308,7 @@ public final class MainActivity extends Activity {
 
   private void stopDsh() {
     dshBusy = true;
+    statusEpoch++;
     updateDshButtons();
     status.setText("Stopping dsh...");
     DshLauncher.Callback callback = new DshLauncher.Callback() {
@@ -391,6 +405,7 @@ public final class MainActivity extends Activity {
     startRoot.setEnabled(!dshBusy);
     startShizuku.setEnabled(!dshBusy);
     stopDsh.setEnabled(!dshBusy);
+    testBridge.setEnabled(!dshBusy);
     hostInput.setEnabled(!dshBusy);
     portInput.setEnabled(!dshBusy);
     copyUrl.setEnabled(!dshBusy && !dshUrl.isEmpty());
@@ -411,6 +426,8 @@ public final class MainActivity extends Activity {
   }
 
   private void refreshStatus() {
+    if (dshBusy) return;
+    final int epoch = ++statusEpoch;
     status.setText("Checking 127.0.0.1:17654 ...");
     new Thread(new Runnable() {
       @Override
@@ -419,6 +436,7 @@ public final class MainActivity extends Activity {
         runOnUiThread(new Runnable() {
           @Override
           public void run() {
+            if (epoch != statusEpoch || dshBusy) return;
             status.setText(message);
           }
         });
