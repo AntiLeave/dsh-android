@@ -3,7 +3,11 @@ import { apply } from '../dsh-plugin/android-tool.mjs'
 
 const NO_ROOT = process.env.DSH_ANDROID_NO_ROOT === '1'
 const tools = new Map()
-apply({ tools: { register: definition => tools.set(definition.name, definition) }, get: () => undefined, logger: console })
+apply({
+  tools: { register: definition => tools.set(definition.name, definition) },
+  get: name => name === 'approval' ? { request: async () => 'allowed-once' } : undefined,
+  logger: console,
+})
 const exec = { signal: new AbortController().signal }
 let passed = 0
 let failed = 0

@@ -69,6 +69,38 @@ async function runBridgeShell(command, signal, timeoutMs = 30000) {
   return { code: result.code, output: result.output ?? '' }
 }
 
+function androidShellMode(ctx, exec) {
+  try {
+    const policy = ctx.get('sandboxPolicy')
+    if (!policy || typeof policy.resolve !== 'function' || !exec.agent) return undefined
+    return policy.resolve({ session: exec.agent.session })?.mode
+  } catch {
+    return undefined
+  }
+}
+
+async function approveAndroidShell(ctx, command, exec) {
+  if (androidShellMode(ctx, exec) === 'danger-full-access') return
+  const approval = ctx.get('approval')
+  if (!approval || typeof approval.request !== 'function') {
+    throw new Error('android_shell requires the dsh approval service')
+  }
+  const preview = command.length > 500 ? `${command.slice(0, 500)}...` : command
+  const outcome = await approval.request({
+    agent: exec.agent,
+    toolName: 'android_shell',
+    ...(exec.callId === undefined ? {} : { callId: exec.callId }),
+    reason: `Android shell: ${preview}`,
+    displayReason: {
+      en: `Allow this Android shell command?\n\n${preview}`,
+      zh: `允许执行这个 Android shell 命令吗？\n\n${preview}`,
+    },
+    ...(exec.signal === undefined ? {} : { signal: exec.signal }),
+  })
+  if (outcome !== 'allowed-once') {
+    throw new Error(`android_shell approval ${outcome}`)
+  }
+}
 function act(args, signal, timeoutMs) {
   return bridge('/action', {
     method: 'POST',
@@ -484,8 +516,8 @@ export function apply(ctx) {
   ctx.tools.register({
     name: 'android_shell',
     description: NO_ROOT
-      ? 'Run a shell command through the Bridge Shizuku service (Android shell/root UID, depending on how Shizuku was started). Use for input keyevent, screencap, am/pm/settings/svc, dumpsys. Requires Shizuku running and DSH Bridge granted Shizuku permission. Returns exit code, stdout and stderr.'
-      : 'Run an arbitrary root shell command on the Android device through Termux su. Use this for capabilities the accessibility bridge does not expose: input keyevent, screencap, am/pm/settings/svc, dumpsys, file access. Requires the Termux app to hold Magisk root. Returns exit code, stdout and stderr.',
+      ? 'Run a shell command through the Bridge Shizuku service (Android shell/root UID, depending on how Shizuku was started). Use for input keyevent, screencap, am/pm/settings/svc, dumpsys. Requires Shizuku running, DSH Bridge granted Shizuku permission, and per-call user approval. Returns exit code, stdout and stderr.'
+      : 'Run an arbitrary root shell command on the Android device through Termux su. Use this for capabilities the accessibility bridge does not expose: input keyevent, screencap, am/pm/settings/svc, dumpsys, file access. Requires the Termux app to hold Magisk root and per-call user approval. Returns exit code, stdout and stderr.',
     parameters: {
       type: 'object',
       properties: {
@@ -500,9 +532,11 @@ export function apply(ctx) {
       render: (_args, value) => text(value),
     },
     async execute(args, exec) {
+      const command = String(args.command)
+      await approveAndroidShell(ctx, command, exec)
       const result = NO_ROOT
-        ? await runBridgeShell(String(args.command), exec.signal, number(args.timeoutMs, 30000))
-        : await runShell(String(args.command), exec.signal, number(args.timeoutMs, 30000))
+        ? await runBridgeShell(command, exec.signal, number(args.timeoutMs, 30000))
+        : await runShell(command, exec.signal, number(args.timeoutMs, 30000))
       return `exit=${result.code}\n${result.output}`
     },
   })

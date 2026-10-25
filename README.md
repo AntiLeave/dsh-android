@@ -254,7 +254,7 @@ bash install-noroot.sh -uninstall  # 清理插件/compat/启动脚本；不卸�
 | `android_apps` | 列出可启动应用 |
 | `android_screenshot` | 无障碍截图，保存 JPEG；有附件存储时可附加图片；支持 `displayId` |
 | `android_virtual_screen` | 创建/停止/查询无头虚拟显示；返回 `displayId` |
-| `android_shell` | root 模式走 `su`；no-root 模式走 Shizuku shell |
+| `android_shell` | root 模式走 `su`；no-root 模式走 Shizuku shell；`danger-full-access` 下全部放行，`workspace-write` 下每次调用需要 dsh 审批 |
 | `android_health` | 检查 Bridge、前台包名、屏幕尺寸 |
 
 无 root 模式注册 7 个工具：`android_shell` 走 Shizuku，`android_virtual_screen` 启动/管理虚拟屏；root 模式走 `su`。`android_act` 的 `launch` 和 `open_url` 会自动改用 Bridge 的 `launch` / `openUrl`。
@@ -490,7 +490,7 @@ Bridge APK 本身不需要 root。root 主要提升自动化和控制能力：
 
 ## 安全
 
-- `android_shell` 是任意 shell；root 模式为 root，no-root 为 Shizuku shell（Shizuku 以 root 启动时也是 root），等于把设备控制权交给模型
+- `android_shell` 是任意 shell；root 模式为 root，no-root 为 Shizuku shell（Shizuku 以 root 启动时也是 root）。`danger-full-access` 下插件直接放行，不弹审批；`workspace-write` 下插件为每次调用请求用户批准
 - 无 root 模式通过 Shizuku 暴露 `android_shell`；dsh 仍使用 `danger-full-access`，仍可读写 Termux 用户能访问的文件
 - dsh 默认使用 `danger-full-access`，没有文件沙箱
 - Bridge 只绑 `127.0.0.1` 但没有鉴权，本机其他 App 也能调用
@@ -549,7 +549,11 @@ $PREFIX/lib/node_modules/@deepseek-ai/dsh/node_modules/@img/sharp-wasm32
 
 **`sandbox mode "workspace-write"` 不可用**
 
-`start-dsh-root.sh` 和 `start-dsh.sh` 都已设置 `DSH_PERMISSION_MODE=danger-full-access`。如果手动启动，需要自己设置。
+`start-dsh-root.sh` 和 `start-dsh.sh` 都已设置 `DSH_PERMISSION_MODE=danger-full-access`。`android_shell` 在 `danger-full-access` 会话中直接放行；在 `workspace-write` 会话中逐次审批。需要审批时，在 dsh 里选择 `workspace-write` 会话。
+
+**`android_shell` 现在需要审批**
+
+`android_shell` 会在 `workspace-write` 会话中逐次请求用户批准；拒绝、取消或无审批通道时不会执行。`danger-full-access` 会话直接放行，不弹审批。
 
 **`glob` / `grep` 不可用 / 缺少 `@vscode/ripgrep-android-arm64`**
 
