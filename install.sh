@@ -168,20 +168,19 @@ wait_termux() {
 
 allow_external_apps() {
   am start -n com.termux/.app.TermuxActivity >/dev/null 2>&1 || true
-  sleep 3
-  SIZE=$(wm size 2>/dev/null | sed -n 's/.*: \([0-9]*\)x\([0-9]*\).*/\1 \2/p' | head -1)
-  W=$(printf '%s' "$SIZE" | awk '{print $1}')
-  H=$(printf '%s' "$SIZE" | awk '{print $2}')
-  [ -n "$W" ] || W=1080
-  [ -n "$H" ] || H=2400
-  input tap $((W / 2)) $((H * 45 / 100)) >/dev/null 2>&1 || true
   sleep 1
-  input text "echo%sallow-external-apps=true%s>>%s~/.termux/termux.properties" >/dev/null 2>&1 || true
-  input keyevent 66 >/dev/null 2>&1 || true
-  sleep 1
-  input text "termux-reload-settings" >/dev/null 2>&1 || true
-  input keyevent 66 >/dev/null 2>&1 || true
-  sleep 2
+  run_root '
+    mkdir -p "$HOME/.termux"
+    prop="$HOME/.termux/termux.properties"
+    touch "$prop"
+    sed -i "/^[[:space:]]*allow-external-apps[[:space:]]*=/d" "$prop"
+    printf "\nallow-external-apps=true\n" >> "$prop"
+    owner=$(stat -c "%u:%g" "$HOME")
+    chown "$owner" "$HOME/.termux" "$prop"
+    chmod 700 "$HOME/.termux"
+    chmod 600 "$prop"
+    command -v termux-reload-settings >/dev/null 2>&1 && termux-reload-settings >/dev/null 2>&1 || true
+  ' || echo "warning: could not update Termux allow-external-apps" >&2
   am force-stop com.termux >/dev/null 2>&1 || true
   sleep 1
   am start -n com.termux/.app.TermuxActivity >/dev/null 2>&1 || true
