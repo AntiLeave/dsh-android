@@ -321,26 +321,32 @@ public final class MainActivity extends Activity {
         runOnUiThread(new Runnable() {
           @Override
           public void run() {
-            dshBusy = false;
-            if (error != null) {
-              status.setText(error);
-            } else {
-              dshUrl = "";
-              dshMode = "";
-              lastLog = "";
-              preferences.edit().remove(PREF_URL).remove(PREF_MODE).apply();
-              status.setText("dsh stopped.");
-            }
-            updateDshButtons();
+            finishStop(error);
           }
         });
       }
     };
-    if ("noroot".equals(dshMode)) {
+    if ("root".equals(dshMode)) {
+      DshLauncher.stopRoot(callback);
+    } else if ("noroot".equals(dshMode)) {
       DshLauncher.stopNoRoot(this, callback);
     } else {
-      DshLauncher.stopRoot(callback);
+      DshLauncher.stopAll(this, callback);
     }
+  }
+
+  private void finishStop(String error) {
+    dshBusy = false;
+    if (error != null) {
+      status.setText(error);
+    } else {
+      dshUrl = "";
+      dshMode = "";
+      lastLog = "";
+      preferences.edit().remove(PREF_URL).remove(PREF_MODE).apply();
+      status.setText("dsh stopped.");
+    }
+    updateDshButtons();
   }
 
   private String readHost() {

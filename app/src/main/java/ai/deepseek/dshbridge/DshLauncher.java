@@ -158,22 +158,26 @@ final class DshLauncher {
     new Thread(new Runnable() {
       @Override
       public void run() {
-        String error = null;
-        try {
-          if (context.checkSelfPermission(TERMUX_PERMISSION)
-              != PackageManager.PERMISSION_GRANTED) {
-            error = "Termux RUN_COMMAND permission is not granted.";
-          } else {
-            sendTermuxCommand(context,
-                "pkill -f '[.]dsh-noroot/android.cordis.yml' 2>/dev/null || true\n");
-            clearDshUrl();
-          }
-        } catch (Throwable throwable) {
-          error = throwable.getClass().getSimpleName() + ": " + throwable.getMessage();
-        }
-        callback.onResult("", error);
+        callback.onResult("", stopNoRootNow(context));
       }
     }, "dsh-shizuku-stop").start();
+  }
+
+  private static String stopNoRootNow(Context context) {
+    String error = null;
+    try {
+      if (context.checkSelfPermission(TERMUX_PERMISSION)
+          != PackageManager.PERMISSION_GRANTED) {
+        error = "Termux RUN_COMMAND permission is not granted.";
+      } else {
+        sendTermuxCommand(context,
+            "pkill -f '[.]dsh-noroot/android.cordis.yml' 2>/dev/null || true\n");
+        clearDshUrl();
+      }
+    } catch (Throwable throwable) {
+      error = throwable.getClass().getSimpleName() + ": " + throwable.getMessage();
+    }
+    return error;
   }
 
   private static void sendTermuxCommand(Context context, String command) {
@@ -268,17 +272,36 @@ final class DshLauncher {
     new Thread(new Runnable() {
       @Override
       public void run() {
-        String error = null;
-        try {
-          CommandResult result = su(
-              "pkill -f '[.]dsh/android.cordis.yml' 2>/dev/null || true", 10);
-          if (!result.ok()) error = "Failed to stop dsh.\n" + result.output;
-        } catch (Throwable throwable) {
-          error = throwable.getClass().getSimpleName() + ": " + throwable.getMessage();
-        }
-        callback.onResult("", error);
+        callback.onResult("", stopRootNow());
       }
     }, "dsh-root-stop").start();
+  }
+
+  private static String stopRootNow() {
+    try {
+      CommandResult result = su(
+          "pkill -f '[.]dsh/android.cordis.yml' 2>/dev/null || true", 10);
+      return result.ok() ? null : "Failed to stop dsh.\n" + result.output;
+    } catch (Throwable throwable) {
+      return throwable.getClass().getSimpleName() + ": " + throwable.getMessage();
+    }
+  }
+
+  static void stopAll(final Context context, final Callback callback) {
+    new Thread(new Runnable() {
+      @Override
+      public void run() {
+        StringBuilder errors = new StringBuilder();
+        String rootError = stopRootNow();
+        String noRootError = stopNoRootNow(context);
+        if (rootError != null && !rootError.isEmpty()) errors.append(rootError);
+        if (noRootError != null && !noRootError.isEmpty()) {
+          if (errors.length() > 0) errors.append('\n');
+          errors.append(noRootError);
+        }
+        callback.onResult("", errors.length() == 0 ? null : errors.toString());
+      }
+    }, "dsh-stop-all").start();
   }
 
   private static CommandResult su(String command, int timeoutSeconds) throws Exception {
