@@ -154,8 +154,21 @@ open_bridge_installer() {
     return 0
   fi
   if [ -f "$APK" ] && command -v termux-open >/dev/null 2>&1; then
+    case "$APK" in
+      "$HOME"/*)
+        APK_TO_OPEN="$APK"
+        ;;
+      *)
+        LOCAL_APK="$HOME/dsh-bridge.apk"
+        if cp "$APK" "$LOCAL_APK" 2>/dev/null; then
+          APK_TO_OPEN="$LOCAL_APK"
+        else
+          APK_TO_OPEN="$APK"
+        fi
+        ;;
+    esac
     echo "opening the DSH Bridge installer; confirm the install on screen"
-    termux-open "$APK" >/dev/null 2>&1 || true
+    termux-open "$APK_TO_OPEN" >/dev/null 2>&1 || true
     sleep 2
   fi
 }
