@@ -58,7 +58,8 @@ final class DshLauncher {
               if (!start.ok()) {
                 error = "Failed to start dsh as root.\n" + start.output;
               } else {
-                long deadline = System.currentTimeMillis() + 180000;
+                long startedAt = System.currentTimeMillis();
+                long deadline = startedAt + 180000;
                 String lastLog = "";
                 while (System.currentTimeMillis() < deadline) {
                   Thread.sleep(1000);
@@ -67,10 +68,16 @@ final class DshLauncher {
                   callback.onProgress(lastLog);
                   url = findUrl(lastLog);
                   if (url != null && portOpen(host, port)) break;
+                  if (System.currentTimeMillis() - startedAt > 5000 && !rootAlive()) {
+                    error = "dsh exited during startup. See the log above.";
+                    break;
+                  }
                 }
                 callback.onProgress(lastLog);
                 if (url == null || !portOpen(host, port)) {
-                  error = "dsh did not start listening on " + clientHost(host) + ":" + port + ".";
+                  if (error == null) {
+                    error = "dsh did not start listening on " + clientHost(host) + ":" + port + ".";
+                  }
                   url = null;
                 }
               }
@@ -125,6 +132,11 @@ final class DshLauncher {
               }
               url = status.url;
               if (url != null && !url.isEmpty()) break;
+              if (status.failed) {
+                error = "dsh failed to start. See the log above.";
+                url = null;
+                break;
+              }
               Thread.sleep(1000);
             }
             callback.onProgress(lastLog);
@@ -180,7 +192,10 @@ final class DshLauncher {
     return "pkill -f '[.]dsh-noroot/android.cordis.yml' 2>/dev/null || true\n"
         + "sleep 1\n"
         + ": > \"$HOME/dsh.log\"\n"
-        + "[ -f \"$HOME/.dsh-noroot/start-dsh.sh\" ] || exit 2\n"
+        + "rm -f \"$HOME/dsh.pid\"\n"
+        + "[ -f \"$HOME/.dsh-noroot/start-dsh.sh\" ] || {"
+        + " curl -fsS -X POST --data-binary 1 http://127.0.0.1:17654/dsh/fail"
+        + " >/dev/null 2>&1 || true; exit 2; }\n"
         + "DSH_WEB_HOST=" + shellQuote(host) + " DSH_WEB_PORT=" + port
         + " bash \"$HOME/.dsh-noroot/start-dsh.sh\"\n"
         + "i=0\n"
@@ -198,9 +213,19 @@ final class DshLauncher {
         + " >/dev/null 2>&1 || true\n"
         + "    exit 0\n"
         + "  fi\n"
+        + "  if [ \"$i\" -ge 3 ]; then\n"
+        + "    PID=$(cat \"$HOME/dsh.pid\" 2>/dev/null)\n"
+        + "    if [ -z \"$PID\" ] || ! kill -0 \"$PID\" 2>/dev/null; then\n"
+        + "      curl -fsS -X POST --data-binary 1 http://127.0.0.1:17654/dsh/fail"
+        + " >/dev/null 2>&1 || true\n"
+        + "      exit 1\n"
+        + "    fi\n"
+        + "  fi\n"
         + "  sleep 2\n"
         + "  i=$((i+1))\n"
         + "done\n"
+        + "curl -fsS -X POST --data-binary 1 http://127.0.0.1:17654/dsh/fail"
+        + " >/dev/null 2>&1 || true\n"
         + "exit 1\n";
   }
 
@@ -226,13 +251,14 @@ final class DshLauncher {
       connection = (HttpURLConnection) new URL("http://127.0.0.1:17654/dsh/status").openConnection();
       connection.setConnectTimeout(1000);
       connection.setReadTimeout(1000);
-      if (connection.getResponseCode() != 200) return new DshStatus("", "");
+      if (connection.getResponseCode() != 200) return new DshStatus("", "", false);
       ByteArrayOutputStream output = new ByteArrayOutputStream();
       drain(connection.getInputStream(), output);
       JSONObject json = new JSONObject(output.toString("UTF-8"));
-      return new DshStatus(json.optString("url", ""), json.optString("log", ""));
+      return new DshStatus(json.optString("url", ""), json.optString("log", ""),
+          json.optBoolean("failed", false));
     } catch (Throwable ignored) {
-      return new DshStatus("", "");
+      return new DshStatus("", "", false);
     } finally {
       if (connection != null) connection.disconnect();
     }
@@ -299,6 +325,18 @@ final class DshLauncher {
     return clientUrl(found);
   }
 
+  private static boolean rootAlive() {
+    try {
+      CommandResult result = su(
+          "pid=$(cat " + ROOT_HOME + "/dsh-root.pid 2>/dev/null); "
+              + "[ -n \"$pid\" ] && kill -0 \"$pid\" 2>/dev/null && echo ALIVE || echo DEAD",
+          5);
+      return result.output.contains("ALIVE");
+    } catch (Throwable ignored) {
+      return false;
+    }
+  }
+
   private static String clientHost(String host) {
     if ("0.0.0.0".equals(host) || "::".equals(host) || "[::]".equals(host)) {
       return "127.0.0.1";
@@ -328,10 +366,12 @@ final class DshLauncher {
   private static final class DshStatus {
     final String url;
     final String log;
+    final boolean failed;
 
-    DshStatus(String url, String log) {
+    DshStatus(String url, String log, boolean failed) {
       this.url = url == null ? "" : url;
       this.log = log == null ? "" : log;
+      this.failed = failed;
     }
   }
 
