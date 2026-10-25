@@ -1172,6 +1172,12 @@ public final class BridgeService extends AccessibilityService {
       String name = command.optString("name", "dsh-virtual");
       return startVirtualDisplay(name, width, height, dpi);
     }
+    if (op.equals("resize")) {
+      int width = Math.max(320, Math.min(3840, command.optInt("width", 1280)));
+      int height = Math.max(240, Math.min(3840, command.optInt("height", 720)));
+      int dpi = Math.max(120, Math.min(640, command.optInt("dpi", 160)));
+      return resizeVirtualDisplay(width, height, dpi);
+    }
     if (op.equals("stop")) {
       JSONObject result = new JSONObject();
       synchronized (virtualDisplayLock) {
@@ -1191,19 +1197,7 @@ public final class BridgeService extends AccessibilityService {
       releaseVirtualDisplayLocked();
       ImageReader reader = null;
       try {
-        reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2);
-        reader.setOnImageAvailableListener(new ImageReader.OnImageAvailableListener() {
-          @Override
-          public void onImageAvailable(ImageReader source) {
-            Image image = null;
-            try {
-              image = source.acquireLatestImage();
-            } catch (RuntimeException ignored) {
-            } finally {
-              if (image != null) image.close();
-            }
-          }
-        }, new Handler(Looper.getMainLooper()));
+        reader = createVirtualDisplayReader(width, height);
         Surface surface = reader.getSurface();
         int flags = DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC
             | DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
@@ -1237,6 +1231,52 @@ public final class BridgeService extends AccessibilityService {
       } catch (RuntimeException error) {
         if (reader != null) reader.close();
         return errorJson("virtual display failed: " + error);
+      }
+    }
+  }
+
+  private ImageReader createVirtualDisplayReader(int width, int height) {
+    ImageReader reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2);
+    reader.setOnImageAvailableListener(new ImageReader.OnImageAvailableListener() {
+      @Override
+      public void onImageAvailable(ImageReader source) {
+        Image image = null;
+        try {
+          image = source.acquireLatestImage();
+        } catch (RuntimeException ignored) {
+        } finally {
+          if (image != null) image.close();
+        }
+      }
+    }, new Handler(Looper.getMainLooper()));
+    return reader;
+  }
+
+  private JSONObject resizeVirtualDisplay(int width, int height, int dpi) throws JSONException {
+    synchronized (virtualDisplayLock) {
+      if (virtualDisplay == null || virtualDisplayId < 0) {
+        return errorJson("virtual display is not active");
+      }
+      ImageReader reader = null;
+      try {
+        reader = createVirtualDisplayReader(width, height);
+        virtualDisplay.resize(width, height, dpi);
+        virtualDisplay.setSurface(reader.getSurface());
+        ImageReader old = virtualDisplayReader;
+        virtualDisplayReader = reader;
+        if (old != null) old.close();
+        JSONObject result = new JSONObject();
+        result.put("ok", true);
+        result.put("active", true);
+        result.put("displayId", virtualDisplayId);
+        result.put("name", virtualDisplayName);
+        result.put("width", width);
+        result.put("height", height);
+        result.put("densityDpi", dpi);
+        return result;
+      } catch (RuntimeException error) {
+        if (reader != null) reader.close();
+        return errorJson("virtual display resize failed: " + error);
       }
     }
   }

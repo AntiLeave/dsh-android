@@ -253,7 +253,7 @@ bash install-noroot.sh -uninstall  # 清理插件/compat/启动脚本；不卸�
 | `android_act` | 点击、长按、setText、滚动、滑动、全局动作、keyevent/enter、启动 App、等待、查找 |
 | `android_apps` | 列出可启动应用 |
 | `android_screenshot` | 无障碍截图，保存 JPEG；有附件存储时可附加图片；支持 `displayId` |
-| `android_virtual_screen` | 创建/停止/查询无头虚拟显示；返回 `displayId` |
+| `android_virtual_screen` | 创建/调整/停止/查询无头虚拟显示；返回 `displayId` |
 | `android_shell` | root 模式走 `su`；no-root 模式走 Shizuku shell；`description` 必填并显示在审批弹窗；`danger-full-access` 下全部放行，`workspace-write` 下每次调用需要 dsh 审批 |
 | `android_health` | 检查 Bridge、前台包名、屏幕尺寸 |
 
@@ -304,6 +304,10 @@ bash install-noroot.sh -uninstall  # 清理插件/compat/启动脚本；不卸�
 {"op": "start", "width": 1280, "height": 720, "dpi": 160}
 ```
 
+```json
+{"op": "resize", "width": 800, "height": 600, "dpi": 160}
+```
+
 返回示例：
 
 ```text
@@ -342,6 +346,7 @@ displayId=15 1280x720 160dpi name=dsh-virtual
 - 显示为 public + own-content + presentation + touch + destroy-content-on-removal，headless；不会显示在物理屏幕上
 - `android_state`、`android_act`、`android_screenshot` 的 `displayId` 默认是 0（物理屏）
 - `launch` / `open_url` 在 root 模式用 `am start --display`，no-root 模式通过 Bridge 调用 Shizuku 执行同样的命令
+- `resize` 保留原 `displayId` 和应用任务，不重建虚拟屏；调整后应用需要重新布局，建议稍等再截图
 - `launch` 默认不会强制重启应用；如果目标应用不在该虚拟屏，会返回 warning，需要重启并拉过去时显式传 `force: true`
 - `open_url` 打开后会再次拉起目标应用，避免 Chrome 等应用把任务留在物理屏导致截图全黑；这一步也不执行 `force-stop`
 - 虚拟屏没有系统桌面/状态栏；直接 `launch` 目标应用即可

@@ -599,11 +599,11 @@ export function apply(ctx) {
   ctx.tools.register({
     name: 'android_virtual_screen',
     description:
-      'Manage a headless Android virtual display for the agent. start creates a secondary display that apps can run on while the owner keeps using the physical screen; stop removes it; status reports it. Use the returned displayId with android_state, android_act and android_screenshot.',
+      'Manage a headless Android virtual display for the agent. start creates a secondary display that apps can run on while the owner keeps using the physical screen; resize changes its resolution without recreating it; stop removes it; status reports it. Use the returned displayId with android_state, android_act and android_screenshot.',
     parameters: {
       type: 'object',
       properties: {
-        op: { type: 'string', enum: ['start', 'stop', 'status'] },
+        op: { type: 'string', enum: ['start', 'resize', 'stop', 'status'] },
         width: { type: 'number', description: 'Virtual display width, default 1280.' },
         height: { type: 'number', description: 'Virtual display height, default 720.' },
         dpi: { type: 'number', description: 'Virtual display density, default 160.' },
@@ -635,7 +635,7 @@ export function apply(ctx) {
         })
         return `virtual display stopped: ${JSON.stringify(status)}`
       }
-      if (op !== 'start') throw new Error(`unsupported virtual screen op: ${op}`)
+      if (op !== 'start' && op !== 'resize') throw new Error(`unsupported virtual screen op: ${op}`)
 
       const width = Math.max(320, Math.min(3840, Math.round(number(args.width, 1280))))
       const height = Math.max(240, Math.min(3840, Math.round(number(args.height, 720))))
@@ -643,10 +643,16 @@ export function apply(ctx) {
       const status = await bridge('/virtualdisplay', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ op: 'start', width, height, dpi, name: 'dsh-virtual' }),
+        body: JSON.stringify({
+          op,
+          width,
+          height,
+          dpi,
+          ...(op === 'start' ? { name: 'dsh-virtual' } : {}),
+        }),
         signal: exec.signal,
       })
-      return `displayId=${status.displayId} ${status.width}x${status.height} ${status.densityDpi}dpi name=${status.name}`
+      return `displayId=${status.displayId} ${status.width}x${status.height} ${status.densityDpi}dpi name=${status.name}${op === 'resize' ? ' resized' : ''}`
     },
   })
 
