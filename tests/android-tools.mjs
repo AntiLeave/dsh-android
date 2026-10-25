@@ -27,6 +27,16 @@ console.log('registered: ' + [...tools.keys()].join(', '))
 
 await run('android_health', {}, text => /"ok":\s*true/u.test(text))
 await run('android_apps', {}, text => text.includes('launchable apps'))
+let virtualDisplayId
+if (tools.has('android_virtual_screen')) {
+  const started = await run('android_virtual_screen', { op: 'start', width: 1280, height: 720, dpi: 160 }, text => /displayId=\d+/u.test(text))
+  virtualDisplayId = Number(/displayId=(\d+)/u.exec(started ?? '')?.[1])
+  if (virtualDisplayId) {
+    await run('android_screenshot', { displayId: virtualDisplayId, maxWidth: 360, quality: 60 }, (_text, value) => value && existsSync(value.path) && statSync(value.path).size > 0)
+    await run('android_virtual_screen', { op: 'status' }, text => text.includes('"active": true'))
+    await run('android_virtual_screen', { op: 'stop' }, text => text.includes('stopped'))
+  }
+}
 await run('android_act', { op: 'launch', package: 'com.android.chrome' }, text =>
   NO_ROOT
     ? text.includes('launched com.android.chrome')
@@ -36,7 +46,7 @@ if (NO_ROOT) {
 } else {
   await run('android_act', { op: 'wait', package: 'com.android.chrome', timeoutMs: 8000 }, text => text.includes('condition met'))
 }
-const initial = await run('android_state', { maxElements: 300 }, text => text.includes('# package='))
+const initial = await run('android_state', { maxElements: 300 }, text => text.includes('# display='))
 const initialEditable = initial && initial.split('\n').find(line => line.includes('editable'))
 if (initialEditable) {
   const match = initialEditable.match(/^\[(\d+)\]/u)
@@ -51,7 +61,7 @@ const shot = await run('android_screenshot', { maxWidth: 360, quality: 60 }, (_t
 if (shot) console.log(`screenshot file: ${shot.path} ${shot.width}x${shot.height}`)
 
 if (NO_ROOT) {
-  console.log('SKIP android_shell: no-root mode')
+  await run('android_shell', { command: 'id; echo SHIZUKU_OK', timeoutMs: 15000 }, text => text.includes('uid=') && text.includes('SHIZUKU_OK'))
 } else {
   await run('android_shell', { command: 'id; wm size; getprop ro.product.model; am force-stop com.android.settings; input keyevent 3; echo SHELL_OK', timeoutMs: 15000 }, text => text.includes('uid=0') && text.includes('SHELL_OK'))
 }

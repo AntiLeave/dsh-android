@@ -5,8 +5,8 @@
 项目由三部分组成：
 
 - **DSH Bridge APK**：Android 无障碍服务，监听 `127.0.0.1:17654`
-- **dsh 插件**：注册 `android_state`、`android_act`、`android_apps`、`android_screenshot`、`android_health`；root 模式额外注册 `android_shell`
-- **安装/兼容层**：在 Termux 中安装 Node、dsh 和原生依赖，支持 root 或普通 Termux 用户运行
+- **dsh 插件**：注册 `android_state`、`android_act`、`android_apps`、`android_screenshot`、`android_virtual_screen`、`android_shell`、`android_health`
+- **安装/兼容层**：在 Termux 中安装 Node、dsh 和原生依赖；root 走 su，no-root 可走 Shizuku
 
 > Developer preview。dsh、Termux、Android 版本变化都可能导致脚本需要调整。
 
@@ -19,6 +19,7 @@
 - root 模式额外提供 `android_shell`：`input keyevent`、`screencap`、`am`、`pm`、`settings`、`svc`、`dumpsys` 等
 - 安装脚本自动完成 Termux、Node、dsh、koffi、node-pty、sharp WASM 和插件部署
 - 无 root 模式只安装 Termux 侧运行时；不安装 root shell、su、pm/settings/appops 等 root 专属能力
+- 虚拟屏幕（root 或 Shizuku）：创建 headless 第二显示，dsh 在虚拟屏运行/操作应用，机主继续使用物理屏
 
 ## 架构
 
@@ -67,9 +68,9 @@ LICENSE                 GNU GPL v3
 
 - Android 11+，arm64
 - Termux（F-Droid 版本）
-- root 可选（Magisk / KernelSU 等）：
+- root 可选（Magisk / KernelSU 等）；Shizuku 可选（no-root 下提供 shell 权限/虚拟屏启动）：
   - root 模式：自动安装 Bridge、启用无障碍、`android_shell`、防冻结常驻
-  - 无 root 模式：手动安装 Bridge APK、手动启用无障碍；不安装 shell 等 root 能力
+  - 无 root 模式：手动安装 Bridge APK、手动启用无障碍；安装 Shizuku 后可用 shell 权限和虚拟屏应用启动
 - PC 端一键部署需要：adb、Node.js；构建 APK 还需要 JDK 和 Android SDK
 - 可选：Chrome（`install.ps1` 自动打开 Web UI 时使用）
 
@@ -124,7 +125,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -BindHost 10.0.0.100
 
 ### 方式三：无 root（Termux）
 
-无 root 模式不执行 `su`，不调用 `pm`/`settings`/`appops`，也不注册 `android_shell`。Bridge APK 需要手动安装并启用无障碍服务。
+无 root 模式不执行 `su`，不调用 `pm`/`settings`/`appops`。无 root 的 `android_shell` 和虚拟屏应用启动通过 Shizuku 完成；Bridge APK 需要手动安装并启用无障碍服务。
 
 1. 安装 Bridge APK（PC 用 adb，或手机文件管理器直接点 APK）：
 
@@ -150,7 +151,17 @@ adb install -r dist/dsh-bridge.apk
 adb shell appops set ai.deepseek.dshbridge 10022 allow
 ```
 
-4. 把安装包推到设备，在 Termux 中运行：
+4. 安装并启动 Shizuku：
+
+```text
+安装 Shizuku（moe.shizuku.privileged.api）
+在 Shizuku 里选择 root 或 ADB 方式启动服务
+解锁主屏后，让 DSH Bridge 在 Shizuku 弹窗中获得权限
+```
+
+Bridge 提供 `/shizuku` 状态/授权接口；第一次授权可以在 Shizuku 应用内点允许。没有 Shizuku 时，no-root 仍可用无障碍工具，但不能用 `android_shell` 和虚拟屏启动应用。
+
+5. 把安装包推到设备，在 Termux 中运行：
 
 ```powershell
 adb push dsh-android.tar.gz /sdcard/Download/
@@ -184,9 +195,9 @@ bash install-noroot.sh -uninstall  # 清理插件/compat/启动脚本；不卸�
 
 如果 root 模式已占用 3080，无 root 模式请加 `-PORT 3090`，或先停止 root dsh。
 
-无 root 模式没有 `android_shell`，`android_act` 的 `launch` / `open_url` 会走无障碍 Bridge，而不是 `su monkey` / `su am`。dsh 由 `nohup` + `termux-wake-lock` 运行；建议允许 Termux 后台运行并关闭电池优化。
+无 root 模式的 `android_shell` 和虚拟屏应用启动走 Shizuku；`android_act` 的 `launch` / `open_url` 在虚拟屏上也走 Shizuku。没有 Shizuku 时只能使用无障碍工具，无法启动虚拟屏应用。dsh 由 `nohup` + `termux-wake-lock` 运行；建议允许 Termux 后台运行并关闭电池优化。
 
-注意：Android 11+/MIUI 可能阻止无 root 的后台应用启动。`launch` / `open_url` 可能返回 `launched`，但前台仍停留在 Termux；此时先手动打开目标应用，或用 root 模式。坐标点击、输入、滚动、截图等无障碍操作不受影响。
+注意：无 Shizuku 时 Android 11+/MIUI 可能阻止无 root 的后台应用启动；有 Shizuku 时由 Shizuku shell 执行 `am start --display`。坐标点击、输入、滚动、截图等无障碍操作不受影响。
 
 ### 常用安装参数
 
@@ -214,7 +225,7 @@ bash install-noroot.sh -uninstall  # 清理插件/compat/启动脚本；不卸�
 -h               帮助
 ```
 
-无 root 脚本不会执行 `su`、`pm`、`settings`、`appops`，也不会安装 `android_shell`。
+无 root 脚本不会执行 `su`、`pm`、`settings`、`appops`；`android_shell` 和虚拟屏应用启动通过 Shizuku（shell/root 由 Shizuku 服务决定）。
 
 `install.ps1`：
 
@@ -239,11 +250,12 @@ bash install-noroot.sh -uninstall  # 清理插件/compat/启动脚本；不卸�
 | `android_state` | 读取当前无障碍树、前台包名、元素 id/文本/坐标 |
 | `android_act` | 点击、长按、setText、滚动、滑动、全局动作、启动 App、等待、查找 |
 | `android_apps` | 列出可启动应用 |
-| `android_screenshot` | 无障碍截图，保存 JPEG；有附件存储时可附加图片 |
-| `android_shell` | root shell；无 root 模式不注册 |
+| `android_screenshot` | 无障碍截图，保存 JPEG；有附件存储时可附加图片；支持 `displayId` |
+| `android_virtual_screen` | 创建/停止/查询无头虚拟显示；返回 `displayId` |
+| `android_shell` | root 模式走 `su`；no-root 模式走 Shizuku shell |
 | `android_health` | 检查 Bridge、前台包名、屏幕尺寸 |
 
-无 root 模式只注册 5 个工具（不含 `android_shell`）。`android_act` 的 `launch` 和 `open_url` 会自动改用 Bridge 的 `launch` / `openUrl`。
+无 root 模式注册 7 个工具：`android_shell` 走 Shizuku，`android_virtual_screen` 启动/管理虚拟屏；root 模式走 `su`。`android_act` 的 `launch` 和 `open_url` 会自动改用 Bridge 的 `launch` / `openUrl`。
 
 示例：
 
@@ -276,7 +288,64 @@ bash install-noroot.sh -uninstall  # 清理插件/compat/启动脚本；不卸�
 - 每次操作前先 `android_state`，操作后重新读取验证
 - element id 只对最近一次 state 有效
 - 无障碍点击失败时，`android_act` 会尝试坐标点击
-- 无障碍做不到的按键、系统命令在 root 模式用 `android_shell`；无 root 模式没有这个工具
+- 无障碍做不到的按键、系统命令用 `android_shell`：root 走 `su`，no-root 走 Shizuku
+
+## 虚拟屏幕
+
+`android_virtual_screen`（root 或 Shizuku）会通过 Bridge 创建一个 **headless 公共虚拟显示**。它不会覆盖或镜像物理屏幕，机主继续使用主屏，dsh 用返回的 `displayId` 在虚拟屏上启动和操作应用：
+
+```json
+{"op": "start", "width": 1280, "height": 720, "dpi": 160}
+```
+
+返回示例：
+
+```text
+displayId=15 1280x720 160dpi name=dsh-virtual
+```
+
+之后所有工具都加 `displayId`：
+
+```json
+{"op": "launch", "package": "com.android.settings", "displayId": 15}
+```
+
+```json
+{"displayId": 15, "maxElements": 300}
+```
+
+```json
+{"displayId": 15, "maxWidth": 720, "quality": 80}
+```
+
+```json
+{"displayId": 15, "op": "click", "text": "WLAN"}
+```
+
+```json
+{"displayId": 15, "op": "tap", "x": 640, "y": 360}
+```
+
+```json
+{"op": "stop"}
+```
+
+行为说明：
+
+- Bridge 创建虚拟屏本身不要求 root；应用启动需要 shell/root 权限。root 模式用 `su`，no-root 模式通过 Shizuku 的 `am start`
+- 显示为 public + own-content + presentation + touch + destroy-content-on-removal，headless；不会显示在物理屏幕上
+- `android_state`、`android_act`、`android_screenshot` 的 `displayId` 默认是 0（物理屏）
+- `launch` / `open_url` 在 root 模式用 `am start --display`，no-root 模式通过 Bridge 调用 Shizuku 执行同样的命令
+- 虚拟屏没有系统桌面/状态栏；直接 `launch` 目标应用即可
+- 首次创建后请使用返回的 `displayId`；id 每次创建可能不同
+- `stop` 会释放虚拟屏并销毁上面的应用；不会把任务搬到主屏
+
+注意：
+
+- 物理屏必须处于**解锁且亮屏**状态。锁屏时公共虚拟屏会显示 `ConnectedDisplayKeyguardPresentation`；息屏后虚拟屏没有可操作窗口，应用无法正常前台运行。解锁并亮屏后需要重新 `launch`
+- 部分应用不支持 secondary display，可能仍启动在主屏或拒绝启动\n\n验证主屏不受影响：\n\n1. 在虚拟屏启动前记录 ndroid_state {displayId:0} 和 wm size -d 0\n2. 启动虚拟屏、launch 一个应用、执行 tap/click\n3. 再次读取 ndroid_state {displayId:0}；应仍是原来的主屏包名/activity\n4. 执行 wm size -d 0；主屏尺寸不变\n5. ndroid_virtual_screen stop 后再读取 displayId 0；主屏仍不变\n\nBridge 使用 display-specific window 查询，不会把虚拟屏的焦点窗口当成主屏；虚拟屏退出时带 DESTROY_CONTENT_ON_REMOVAL，不会把虚拟屏任务迁移到主屏。
+- 虚拟屏没有系统装饰和音频；需要使用 `android_act` / `android_screenshot` 操作和观察
+- 如果启动失败，先用 `android_shell` 的 `am start --display <id> ...` 确认；root 模式这是主要启动方式
 
 ## MIUI / HyperOS 获取应用列表
 
@@ -349,9 +418,13 @@ Get-FileHash "$repo\dist\dsh-android.tar.gz" -Algorithm SHA256
 Bridge 默认只监听 `127.0.0.1:17654`：
 
 - `/health`
-- `/state?maxDepth=28&maxElements=600`
+- `/shizuku`（GET 状态，POST request）
+- `/shell`（POST，经 Shizuku 执行 shell）
+- `/displays`
+- `/virtualdisplay`（GET 状态，POST start/stop）
+- `/state?maxDepth=28&maxElements=600&displayId=0`
 - `/action`（POST JSON）
-- `/screenshot?maxWidth=720&quality=80`
+- `/screenshot?maxWidth=720&quality=80&displayId=0`
 - `/apps`
 - `/events?since=0`
 
@@ -401,16 +474,16 @@ Bridge APK 本身不需要 root。root 主要提升自动化和控制能力：
 无 root 模式由 `install-noroot.sh` 安装：
 
 - 不执行 `su`，不修改 `pm/settings/appops`
-- 不注册 `android_shell`
-- `launch` / `open_url` 走 Bridge，不依赖 `su`
+- `android_shell` 通过 Shizuku
+- `launch` / `open_url` 走 Bridge/Shizuku，不依赖 `su`
 - 无 root 的 dsh 以 Termux 用户运行，仍可能被 OEM 后台策略冻结
 
 无障碍树读取、点击、输入、滚动、截图、应用列表、health 在无 root 下仍可用，前提是 Bridge APK 已安装、无障碍已启用、MIUI 应用列表权限已授予。
 
 ## 安全
 
-- `android_shell` 是任意 root shell，等于把整台设备交给模型
-- 无 root 模式不注册 `android_shell`，但 dsh 仍使用 `danger-full-access`，仍可读写 Termux 用户能访问的文件
+- `android_shell` 是任意 shell；root 模式为 root，no-root 为 Shizuku shell（Shizuku 以 root 启动时也是 root），等于把设备控制权交给模型
+- 无 root 模式通过 Shizuku 暴露 `android_shell`；dsh 仍使用 `danger-full-access`，仍可读写 Termux 用户能访问的文件
 - dsh 默认使用 `danger-full-access`，没有文件沙箱
 - Bridge 只绑 `127.0.0.1` 但没有鉴权，本机其他 App 也能调用
 - Web UI 用 token 认证；不要把带 token 的 URL 发到不可信环境
@@ -433,7 +506,8 @@ adb shell su -c "cd /data/local/tmp/dsh-android/tests && HOME=/data/data/com.ter
 - `android_apps`
 - `android_state`
 - `android_screenshot`
-- `android_shell`
+- `android_virtual_screen`：start / state / screenshot / status / stop
+- `android_shell` (root)
 - `android_act`：launch / wait / click / set_text / clear_text / global
 
 需要设备已启用 Bridge、Termux 中已安装依赖。root 模式用 `su` 运行。
@@ -445,7 +519,7 @@ cd ~/dsh-android/tests
 DSH_ANDROID_NO_ROOT=1 node android-tools.mjs
 ```
 
-`android_shell` 测试会被跳过；`android_act launch` 使用 Bridge，不依赖 root。Android/MIUI 可能阻止后台启动，所以无 root 测试会跳过 launch 后的 `wait` 和 Settings 导航检查。
+`android_shell` 在无 root 模式下通过 Shizuku 运行；`android_virtual_screen` 也走 Bridge + Shizuku。需要先启动 Shizuku 并授予 DSH Bridge 权限。Android/MIUI 可能阻止后台启动，所以无 root 测试会跳过 launch 后的 `wait` 和 Settings 导航检查。
 
 ## 常见问题
 
@@ -477,9 +551,17 @@ MIUI/HyperOS 未允许“获取应用列表”。root 安装器会自动设置�
 adb shell appops set ai.deepseek.dshbridge 10022 allow
 ```
 
-**无 root 模式没有 `android_shell`**
+**无 root 模式的 `android_shell` / 虚拟屏应用启动**
 
-这是预期行为。无 root 安装器不注册 `android_shell`；请使用 `android_act` 的点击、输入、滚动等无障碍操作。需要 `input keyevent` 或任意 shell 时，必须使用 root 安装。
+无 root 模式通过 Shizuku 执行 `android_shell` 和虚拟屏的 `am start --display`。确认 Shizuku 服务正在运行、DSH Bridge 已授权，并且主屏亮屏解锁；否则 Bridge 会返回 Shizuku 未运行/未授权。
+
+**虚拟屏显示锁屏 / 应用不能在虚拟屏启动**
+
+公共虚拟屏会跟随主屏的 keyguard。先解锁并保持亮屏，再调用 `android_virtual_screen` 或重新 `launch`；息屏后虚拟屏没有可操作窗口。如果公司/OEM 策略仍然阻止，请在 root 模式用 `am start --display <id> ...`。no-root 模式下 Bridge 通过 Shizuku 的 shell 权限启动应用；没有 Shizuku 或未授权时会被 Android 权限拒绝。
+
+**虚拟屏启动应用失败**
+
+虚拟屏没有系统桌面，必须用 `android_act` 的 `launch`/`open_url` 指定 `displayId`。部分应用只支持主屏；可以换应用，或使用 `android_shell` 的 `am start --display` 并检查 `dumpsys activity`。
 
 **Bridge 17654 不通**
 
@@ -519,8 +601,11 @@ dsh 重启或插件重载会轮换 token。查看：
 - 截图对 `FLAG_SECURE` 窗口无效
 - `read_image` / 截图进入模型需要模型支持图片输入
 - dsh 版本固定在 `0.2.1-rc.2`，Node 24；升级 dsh 可能需要重新适配 koffi/node-pty/sharp
-- 无 root 模式不提供 `android_shell`、按键注入和 root `monkey`；`launch` / `open_url` 依赖 Bridge
+- 无 root 模式不提供 root shell；`android_shell` 走 Shizuku，`launch` / `open_url` 依赖 Bridge/Shizuku
 - 无 root 模式不会自动安装 APK、启用无障碍或修改 appops；这些需要手动完成
+- 虚拟屏启动应用必须使用 Shizuku/root；no-root 无 Shizuku 时 Bridge 启动其他应用会被 Android 权限拒绝
+- 虚拟屏是 public display；主屏锁屏时虚拟屏也会显示 keyguard，需先解锁；息屏后没有可操作窗口
+- 虚拟屏没有系统桌面/状态栏，应用需要显式 `launch`；不支持 secondary display 的应用可能启动失败
 - 无 root 模式的 dsh 以 Termux 用户运行，可能被 OEM 后台策略冻结
 - 设备端 `install.sh` 和 `install-noroot.sh` 都不包含 Termux APK，需要设备已有 Termux 或手动提供 APK
 - PC 端自动打开 Web UI 依赖 Chrome 地址栏；没有 Chrome 时只打印 URL
@@ -530,4 +615,4 @@ dsh 重启或插件重载会轮换 token。查看：
 
 GNU General Public License v3.0，见 [LICENSE](LICENSE)。
 
-dsh 上游项目使用 MIT License；Termux、Gradle Wrapper 等第三方组件遵循各自许可证。发布二进制时请同时提供本仓库源码链接。
+dsh 上游项目使用 MIT License；Shizuku 使用 Apache-2.0/MIT（Shizuku API）；Termux、Gradle Wrapper 等第三方组件遵循各自许可证。发布二进制时请同时提供本仓库源码链接。

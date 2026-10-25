@@ -2,6 +2,7 @@ package ai.deepseek.dshbridge;
 
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.GestureDescription;
+import android.app.ActivityOptions;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
@@ -9,23 +10,35 @@ import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
+import android.graphics.PixelFormat;
 import android.graphics.Path;
 import android.graphics.Rect;
 import android.hardware.HardwareBuffer;
+import android.hardware.display.DisplayManager;
+import android.hardware.display.VirtualDisplay;
+import android.media.Image;
+import android.media.ImageReader;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Base64;
 import android.util.DisplayMetrics;
 import android.util.Log;
+import android.util.SparseArray;
 import android.view.Display;
+import android.view.Surface;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
 
 import org.json.JSONArray;
 import org.json.JSONException;
+
+import rikka.shizuku.Shizuku;
+import rikka.shizuku.ShizukuRemoteProcess;
 import org.json.JSONObject;
 
 import java.io.BufferedOutputStream;
@@ -33,6 +46,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.lang.reflect.Method;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -43,7 +57,9 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
@@ -61,6 +77,9 @@ public final class BridgeService extends AccessibilityService {
   private static final int PORT = 17654;
   private static final int MAX_BODY_BYTES = 1 << 20;
   private static final int EVENT_RING = 120;
+  private static final int SHIZUKU_PERMISSION_REQUEST = 1001;
+  private static final int VIRTUAL_DISPLAY_FLAG_SUPPORTS_TOUCH = 1 << 6;
+  private static final int VIRTUAL_DISPLAY_FLAG_DESTROY_CONTENT_ON_REMOVAL = 1 << 8;
 
   private final Object lock = new Object();
   private final List<Entry> entries = new ArrayList<>();
@@ -73,6 +92,13 @@ public final class BridgeService extends AccessibilityService {
   private volatile long lastEventAt;
   private volatile String currentPackage = "";
   private volatile String currentActivity = "";
+  private final Map<Integer, String> activities = new ConcurrentHashMap<>();
+  private int activeDisplayId = Display.DEFAULT_DISPLAY;
+  private final Object virtualDisplayLock = new Object();
+  private VirtualDisplay virtualDisplay;
+  private ImageReader virtualDisplayReader;
+  private int virtualDisplayId = -1;
+  private String virtualDisplayName = "";
 
   @Override
   protected void onServiceConnected() {
@@ -84,16 +110,20 @@ public final class BridgeService extends AccessibilityService {
   @Override
   public void onAccessibilityEvent(AccessibilityEvent event) {
     lastEventAt = SystemClock.elapsedRealtime();
+    int displayId = event.getDisplayId();
     if (event.getPackageName() != null) currentPackage = event.getPackageName().toString();
     if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
         && event.getClassName() != null) {
-      currentActivity = event.getClassName().toString();
+      String activity = event.getClassName().toString();
+      activities.put(displayId, activity);
+      if (displayId == Display.DEFAULT_DISPLAY) currentActivity = activity;
     }
     try {
       JSONObject item = new JSONObject();
       item.put("seq", ++eventSeq);
       item.put("time", System.currentTimeMillis());
       item.put("type", AccessibilityEvent.eventTypeToString(event.getEventType()));
+      item.put("displayId", displayId);
       item.put("package", safe(event.getPackageName()));
       item.put("class", safe(event.getClassName()));
       item.put("text", join(event.getText()));
@@ -117,6 +147,9 @@ public final class BridgeService extends AccessibilityService {
     stopServer();
     synchronized (lock) {
       recycleEntriesLocked();
+    }
+    synchronized (virtualDisplayLock) {
+      releaseVirtualDisplayLocked();
     }
     super.onDestroy();
     Log.i(TAG, "accessibility bridge stopped");
@@ -263,15 +296,41 @@ public final class BridgeService extends AccessibilityService {
     if (path.equals("/") || path.equals("/health")) {
       return health();
     }
+    if (path.equals("/shizuku")) {
+      if (method.equals("POST")) {
+        String text = new String(body, StandardCharsets.UTF_8);
+        JSONObject command = text.isEmpty() ? new JSONObject() : new JSONObject(text);
+        return shizukuAction(command);
+      }
+      return shizukuStatus();
+    }
+    if (path.equals("/shell") && method.equals("POST")) {
+      String text = new String(body, StandardCharsets.UTF_8);
+      JSONObject command = text.isEmpty() ? new JSONObject() : new JSONObject(text);
+      return runShizuku(command.optString("command", ""));
+    }
+    if (path.equals("/virtualdisplay")) {
+      if (method.equals("POST")) {
+        String text = new String(body, StandardCharsets.UTF_8);
+        JSONObject command = text.isEmpty() ? new JSONObject() : new JSONObject(text);
+        return virtualDisplayAction(command);
+      }
+      return virtualDisplayStatus();
+    }
+    if (path.equals("/displays")) {
+      return displays();
+    }
     if (path.equals("/state")) {
       int maxDepth = queryInt(uri, "maxDepth", 28);
       int maxElements = queryInt(uri, "maxElements", 600);
-      return state(Math.max(1, Math.min(80, maxDepth)), Math.max(1, Math.min(3000, maxElements)));
+      int displayId = queryInt(uri, "displayId", Display.DEFAULT_DISPLAY);
+      return state(Math.max(1, Math.min(80, maxDepth)), Math.max(1, Math.min(3000, maxElements)), displayId);
     }
     if (path.equals("/screenshot")) {
       int maxWidth = queryInt(uri, "maxWidth", 720);
       int quality = queryInt(uri, "quality", 80);
-      return screenshot(Math.max(1, Math.min(2160, maxWidth)), Math.max(20, Math.min(100, quality)));
+      int displayId = queryInt(uri, "displayId", Display.DEFAULT_DISPLAY);
+      return screenshot(Math.max(1, Math.min(2160, maxWidth)), Math.max(20, Math.min(100, quality)), displayId);
     }
     if (path.equals("/apps")) {
       return apps();
@@ -340,28 +399,35 @@ public final class BridgeService extends AccessibilityService {
   // ---------------------------------------------------------------------------
   // State observation
 
-  private JSONObject state(int maxDepth, int maxElements) throws JSONException {
+  private JSONObject state(int maxDepth, int maxElements, int displayId) throws JSONException {
     synchronized (lock) {
-      JSONObject result = buildStateLocked(maxDepth, maxElements);
+      activeDisplayId = displayId;
+      JSONObject result = buildStateLocked(maxDepth, maxElements, displayId);
       if (result == null) {
-        return errorJson("no active window; unlock the device or grant the accessibility service");
+        return errorJson("no active window on display " + displayId
+            + "; use /displays to find a valid display");
       }
       return result;
     }
   }
 
-  private JSONObject buildStateLocked(int maxDepth, int maxElements) throws JSONException {
-    AccessibilityNodeInfo root = activeRoot();
+  private JSONObject buildStateLocked(int maxDepth, int maxElements, int displayId) throws JSONException {
+    Display display = displayManager().getDisplay(displayId);
+    if (display == null) return null;
+    AccessibilityNodeInfo root = activeRoot(displayId);
     if (root == null) return null;
 
+    activeDisplayId = displayId;
     recycleEntriesLocked();
     JSONArray nodes = new JSONArray();
     StringBuilder text = new StringBuilder(8192);
-    DisplayMetrics metrics = getResources().getDisplayMetrics();
+    DisplayMetrics metrics = displayMetrics(display);
     String pkg = safe(root.getPackageName());
     if (pkg.isEmpty()) pkg = currentPackage;
+    String activity = activities.getOrDefault(displayId, "");
 
-    text.append("# package=").append(pkg).append(" activity=").append(currentActivity)
+    text.append("# display=").append(displayId).append(" package=").append(pkg)
+        .append(" activity=").append(activity)
         .append(" screen=").append(metrics.widthPixels).append('x').append(metrics.heightPixels)
         .append(" density=").append(metrics.densityDpi).append('\n');
     traverseLocked(root, -1, 0, maxDepth, maxElements, nodes, text);
@@ -369,8 +435,10 @@ public final class BridgeService extends AccessibilityService {
     JSONObject result = new JSONObject();
     result.put("ok", true);
     result.put("seq", ++stateSeq);
+    result.put("displayId", displayId);
+    result.put("displayName", display.getName());
     result.put("package", pkg);
-    result.put("activity", currentActivity);
+    result.put("activity", activity);
     result.put("screenWidth", metrics.widthPixels);
     result.put("screenHeight", metrics.heightPixels);
     result.put("densityDpi", metrics.densityDpi);
@@ -379,30 +447,41 @@ public final class BridgeService extends AccessibilityService {
     result.put("truncated", nodes.length() >= maxElements);
     result.put("nodes", nodes);
     result.put("text", text.toString());
-    result.put("windows", windowList());
+    result.put("windows", windowList(displayId));
     return result;
   }
 
-  private AccessibilityNodeInfo activeRoot() {
-    AccessibilityNodeInfo root = getRootInActiveWindow();
-    if (root != null) return root;
-    List<AccessibilityWindowInfo> windows = getWindows();
+  private AccessibilityNodeInfo activeRoot(int displayId) {
+    SparseArray<List<AccessibilityWindowInfo>> windowsByDisplay = getWindowsOnAllDisplays();
+    List<AccessibilityWindowInfo> windows = windowsByDisplay.get(displayId);
+    if (windows == null) {
+      if (displayId == Display.DEFAULT_DISPLAY) return getRootInActiveWindow();
+      return null;
+    }
     for (AccessibilityWindowInfo window : windows) {
       if (window.isActive() || window.isFocused()) {
         AccessibilityNodeInfo candidate = window.getRoot();
         if (candidate != null) return candidate;
       }
     }
+    for (int i = windows.size() - 1; i >= 0; i--) {
+      AccessibilityNodeInfo candidate = windows.get(i).getRoot();
+      if (candidate != null) return candidate;
+    }
     return null;
   }
 
-  private JSONArray windowList() throws JSONException {
+  private JSONArray windowList(int displayId) throws JSONException {
     JSONArray array = new JSONArray();
-    for (AccessibilityWindowInfo window : getWindows()) {
+    SparseArray<List<AccessibilityWindowInfo>> windowsByDisplay = getWindowsOnAllDisplays();
+    List<AccessibilityWindowInfo> windows = windowsByDisplay.get(displayId);
+    if (windows == null) return array;
+    for (AccessibilityWindowInfo window : windows) {
       JSONObject item = new JSONObject();
       Rect bounds = new Rect();
       window.getBoundsInScreen(bounds);
       item.put("id", window.getId());
+      item.put("displayId", window.getDisplayId());
       item.put("type", window.getType());
       item.put("layer", window.getLayer());
       item.put("active", window.isActive());
@@ -413,6 +492,16 @@ public final class BridgeService extends AccessibilityService {
       array.put(item);
     }
     return array;
+  }
+
+  private DisplayManager displayManager() {
+    return (DisplayManager) getSystemService(Context.DISPLAY_SERVICE);
+  }
+
+  private static DisplayMetrics displayMetrics(Display display) {
+    DisplayMetrics metrics = new DisplayMetrics();
+    display.getRealMetrics(metrics);
+    return metrics;
   }
 
   private void traverseLocked(AccessibilityNodeInfo node, int parent, int depth, int maxDepth,
@@ -488,15 +577,20 @@ public final class BridgeService extends AccessibilityService {
   private JSONObject action(JSONObject command) throws Exception {
     String op = command.optString("op", "");
     if (op.isEmpty()) return errorJson("missing op");
+    int displayId = command.optInt("displayId", Display.DEFAULT_DISPLAY);
     synchronized (lock) {
-      JSONObject fresh = buildStateLocked(28, 600);
+      JSONObject fresh = buildStateLocked(28, 600, displayId);
       if (fresh == null && !op.equals("launch") && !op.equals("openUrl")
           && !op.equals("global") && !op.equals("clipboard")) {
-        return errorJson("no active window");
+        return errorJson("no active window on display " + displayId);
+      }
+      if (displayId != Display.DEFAULT_DISPLAY
+          && (op.equals("global") || op.equals("back") || op.equals("press"))) {
+        return errorJson("global/back actions are not display-scoped; use tap or the android_shell input -d command");
       }
       switch (op) {
         case "state":
-          return state(command.optInt("maxDepth", 28), command.optInt("maxElements", 600));
+          return state(command.optInt("maxDepth", 28), command.optInt("maxElements", 600), displayId);
         case "click":
           return click(command, false);
         case "longClick":
@@ -550,7 +644,7 @@ public final class BridgeService extends AccessibilityService {
     }
     if (!dispatched) {
       Rect bounds = target.bounds;
-      dispatched = tapGesture(bounds.centerX(), bounds.centerY(), longClick ? 800 : 60);
+      dispatched = tapGesture(bounds.centerX(), bounds.centerY(), longClick ? 800 : 60, activeDisplayId);
     }
     return resultJson(dispatched, dispatched ? "dispatched" : "click was not dispatched");
   }
@@ -656,7 +750,7 @@ public final class BridgeService extends AccessibilityService {
             : (int) (bounds.top + bounds.height() * 0.7),
             bounds.centerX(), direction.equals("up") || direction.equals("backward")
             ? (int) (bounds.top + bounds.height() * 0.7)
-            : (int) (bounds.top + bounds.height() * 0.3), 280);
+            : (int) (bounds.top + bounds.height() * 0.3), 280, activeDisplayId);
       }
     }
     return resultJson(dispatched, dispatched ? "scroll dispatched" : "no scrollable node and gesture failed");
@@ -668,7 +762,7 @@ public final class BridgeService extends AccessibilityService {
     int toX = command.optInt("toX", command.optInt("x2", -1));
     int toY = command.optInt("toY", command.optInt("y2", -1));
     int duration = command.optInt("duration", command.optInt("durationMs", 300));
-    boolean dispatched = swipeGesture(fromX, fromY, toX, toY, Math.max(20, Math.min(5000, duration)));
+    boolean dispatched = swipeGesture(fromX, fromY, toX, toY, Math.max(20, Math.min(5000, duration)), activeDisplayId);
     return resultJson(dispatched, dispatched ? "swipe dispatched" : "swipe rejected");
   }
 
@@ -676,37 +770,38 @@ public final class BridgeService extends AccessibilityService {
     int x = command.optInt("x", -1);
     int y = command.optInt("y", -1);
     int duration = command.optInt("duration", 60);
-    boolean dispatched = tapGesture(x, y, Math.max(20, Math.min(5000, duration)));
+    boolean dispatched = tapGesture(x, y, Math.max(20, Math.min(5000, duration)), activeDisplayId);
     return resultJson(dispatched, dispatched ? "tap dispatched" : "tap rejected");
   }
 
   private JSONObject longPressCommand(JSONObject command) throws JSONException {
     int x = command.optInt("x", -1);
     int y = command.optInt("y", -1);
-    boolean dispatched = tapGesture(x, y, 800);
+    boolean dispatched = tapGesture(x, y, 800, activeDisplayId);
     return resultJson(dispatched, dispatched ? "long press dispatched" : "long press rejected");
   }
 
-  private boolean tapGesture(int x, int y, int duration) {
+  private boolean tapGesture(int x, int y, int duration, int displayId) {
     if (x < 0 || y < 0) return false;
     Path path = new Path();
     path.moveTo(x, y);
     path.lineTo(x + 1, y + 1);
-    return dispatchPath(path, duration);
+    return dispatchPath(path, duration, displayId);
   }
 
-  private boolean swipeGesture(int fromX, int fromY, int toX, int toY, int duration) {
+  private boolean swipeGesture(int fromX, int fromY, int toX, int toY, int duration, int displayId) {
     if (fromX < 0 || fromY < 0 || toX < 0 || toY < 0) return false;
     Path path = new Path();
     path.moveTo(fromX, fromY);
     path.lineTo(toX, toY);
-    return dispatchPath(path, duration);
+    return dispatchPath(path, duration, displayId);
   }
 
-  private boolean dispatchPath(Path path, int duration) {
+  private boolean dispatchPath(Path path, int duration, int displayId) {
     GestureDescription.StrokeDescription stroke =
         new GestureDescription.StrokeDescription(path, 0, duration);
-    GestureDescription gesture = new GestureDescription.Builder().addStroke(stroke).build();
+    GestureDescription gesture = new GestureDescription.Builder()
+        .addStroke(stroke).setDisplayId(displayId).build();
     return dispatchGesture(gesture, new GestureResultCallback() {
       @Override
       public void onCompleted(GestureDescription gestureDescription) {
@@ -759,10 +854,27 @@ public final class BridgeService extends AccessibilityService {
     Intent intent = manager.getLaunchIntentForPackage(packageName);
     if (intent == null) return errorJson("no launch intent for " + packageName);
     intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
+    int displayId = command.optInt("displayId", Display.DEFAULT_DISPLAY);
     try {
-      startActivity(intent);
-      return resultJson(true, "launched " + packageName);
+      if (displayId == Display.DEFAULT_DISPLAY) {
+        startActivity(intent);
+      } else {
+        ActivityOptions options = ActivityOptions.makeBasic();
+        options.setLaunchDisplayId(displayId);
+        startActivity(intent, options.toBundle());
+      }
+      return resultJson(true, "launched " + packageName + " on display " + displayId);
     } catch (RuntimeException error) {
+      if (displayId != Display.DEFAULT_DISPLAY && shizukuRunning() && shizukuGranted()) {
+        JSONObject shell = runShizuku("am start --display " + displayId
+            + " -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p "
+            + shellQuote(packageName));
+        if (shell.optBoolean("ok", false) && shell.optInt("code", 1) == 0) {
+          return resultJson(true, "launched " + packageName + " on display " + displayId + " via Shizuku");
+        }
+        return errorJson("launch failed: " + error + "; Shizuku: "
+            + shell.optString("output", shell.optString("error", "")));
+      }
       return errorJson("launch failed: " + error);
     }
   }
@@ -784,12 +896,28 @@ public final class BridgeService extends AccessibilityService {
   private JSONObject openUrl(JSONObject command) throws JSONException {
     String url = command.optString("url", "");
     if (url.isEmpty()) return errorJson("url is required");
+    int displayId = command.optInt("displayId", Display.DEFAULT_DISPLAY);
     try {
       Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
       intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-      startActivity(intent);
-      return resultJson(true, "opened " + url);
+      if (displayId == Display.DEFAULT_DISPLAY) {
+        startActivity(intent);
+      } else {
+        ActivityOptions options = ActivityOptions.makeBasic();
+        options.setLaunchDisplayId(displayId);
+        startActivity(intent, options.toBundle());
+      }
+      return resultJson(true, "opened " + url + " on display " + displayId);
     } catch (RuntimeException error) {
+      if (displayId != Display.DEFAULT_DISPLAY && shizukuRunning() && shizukuGranted()) {
+        JSONObject shell = runShizuku("am start --display " + displayId
+            + " -a android.intent.action.VIEW -d " + shellQuote(url));
+        if (shell.optBoolean("ok", false) && shell.optInt("code", 1) == 0) {
+          return resultJson(true, "opened " + url + " on display " + displayId + " via Shizuku");
+        }
+        return errorJson("open url failed: " + error + "; Shizuku: "
+            + shell.optString("output", shell.optString("error", "")));
+      }
       return errorJson("open url failed: " + error);
     }
   }
@@ -807,9 +935,10 @@ public final class BridgeService extends AccessibilityService {
     String text = command.optString("text", "");
     String packageName = command.optString("package", "");
     long timeout = Math.max(100, Math.min(60000, command.optLong("timeoutMs", 8000)));
+    int displayId = command.optInt("displayId", Display.DEFAULT_DISPLAY);
     long deadline = System.currentTimeMillis() + timeout;
     while (System.currentTimeMillis() < deadline) {
-      JSONObject current = buildStateLocked(28, 800);
+      JSONObject current = buildStateLocked(28, 800, displayId);
       if (current != null) {
         boolean textMatch = text.isEmpty();
         if (!text.isEmpty()) {
@@ -884,12 +1013,12 @@ public final class BridgeService extends AccessibilityService {
   // ---------------------------------------------------------------------------
   // Screenshot
 
-  private JSONObject screenshot(int maxWidth, int quality) throws Exception {
+  private JSONObject screenshot(int maxWidth, int quality, int displayId) throws Exception {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
       return errorJson("screenshots require Android 11 or newer");
     }
     final CompletableFuture<AccessibilityService.ScreenshotResult> future = new CompletableFuture<>();
-    takeScreenshot(Display.DEFAULT_DISPLAY, getMainExecutor(), new AccessibilityService.TakeScreenshotCallback() {
+    takeScreenshot(displayId, getMainExecutor(), new AccessibilityService.TakeScreenshotCallback() {
       @Override
       public void onSuccess(AccessibilityService.ScreenshotResult result) {
         future.complete(result);
@@ -930,6 +1059,251 @@ public final class BridgeService extends AccessibilityService {
     json.put("screenHeight", height);
     json.put("data", Base64.encodeToString(bytes, Base64.NO_WRAP));
     return json;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Shizuku
+
+  private boolean shizukuRunning() {
+    try {
+      return Shizuku.pingBinder();
+    } catch (Throwable ignored) {
+      return false;
+    }
+  }
+
+  private boolean shizukuGranted() {
+    try {
+      return Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED;
+    } catch (Throwable ignored) {
+      return false;
+    }
+  }
+
+  private JSONObject shizukuStatus() throws JSONException {
+    JSONObject result = new JSONObject();
+    result.put("ok", true);
+    result.put("running", shizukuRunning());
+    result.put("granted", shizukuGranted());
+    try {
+      result.put("uid", Shizuku.getUid());
+    } catch (Throwable ignored) {
+    }
+    try {
+      result.put("version", Shizuku.getVersion());
+    } catch (Throwable ignored) {
+    }
+    return result;
+  }
+
+  private JSONObject shizukuAction(JSONObject command) throws JSONException {
+    String op = command.optString("op", "status");
+    if (op.equals("status")) return shizukuStatus();
+    if (!op.equals("request")) return errorJson("unsupported shizuku op " + op);
+    if (!shizukuRunning()) return errorJson("Shizuku service is not running");
+    if (shizukuGranted()) return shizukuStatus();
+    try {
+      Shizuku.requestPermission(SHIZUKU_PERMISSION_REQUEST);
+      JSONObject result = shizukuStatus();
+      result.put("requested", true);
+      return result;
+    } catch (Throwable error) {
+      return errorJson("Shizuku permission request failed: " + error);
+    }
+  }
+
+  private JSONObject runShizuku(String command) throws JSONException {
+    if (command.trim().isEmpty()) return errorJson("missing command");
+    if (!shizukuRunning()) return errorJson("Shizuku service is not running");
+    if (!shizukuGranted()) return errorJson("Shizuku permission is not granted");
+    try {
+      Method newProcess = Shizuku.class.getDeclaredMethod(
+          "newProcess", String[].class, String[].class, String.class);
+      newProcess.setAccessible(true);
+      Process process = (Process) newProcess.invoke(
+          null, new String[] {"sh", "-c", command}, null, null);
+      ByteArrayOutputStream output = new ByteArrayOutputStream();
+      Thread stdout = new Thread(() -> drain(process.getInputStream(), output));
+      Thread stderr = new Thread(() -> drain(process.getErrorStream(), output));
+      stdout.start();
+      stderr.start();
+      boolean finished = process instanceof ShizukuRemoteProcess
+          ? ((ShizukuRemoteProcess) process).waitForTimeout(30, TimeUnit.SECONDS)
+          : process.waitFor(30, TimeUnit.SECONDS);
+      if (!finished) process.destroy();
+      stdout.join(1000);
+      stderr.join(1000);
+      JSONObject result = new JSONObject();
+      result.put("ok", true);
+      result.put("code", finished ? process.exitValue() : -1);
+      result.put("output", output.toString("UTF-8").trim());
+      return result;
+    } catch (Throwable error) {
+      return errorJson("Shizuku command failed: " + error);
+    }
+  }
+
+  private static void drain(InputStream input, OutputStream output) {
+    byte[] buffer = new byte[8192];
+    try {
+      int read;
+      while ((read = input.read(buffer)) != -1) {
+        synchronized (output) {
+          output.write(buffer, 0, read);
+        }
+      }
+    } catch (IOException ignored) {
+    }
+  }
+
+  private static String shellQuote(String value) {
+    return "'" + value.replace("'", "'\\''") + "'";
+  }
+
+  // ---------------------------------------------------------------------------
+  // Virtual display
+
+  private JSONObject virtualDisplayAction(JSONObject command) throws JSONException {
+    String op = command.optString("op", "start");
+    if (op.equals("start")) {
+      int width = Math.max(320, Math.min(3840, command.optInt("width", 1280)));
+      int height = Math.max(240, Math.min(3840, command.optInt("height", 720)));
+      int dpi = Math.max(120, Math.min(640, command.optInt("dpi", 160)));
+      String name = command.optString("name", "dsh-virtual");
+      return startVirtualDisplay(name, width, height, dpi);
+    }
+    if (op.equals("stop")) {
+      JSONObject result = new JSONObject();
+      synchronized (virtualDisplayLock) {
+        releaseVirtualDisplayLocked();
+        result.put("ok", true);
+        result.put("active", false);
+      }
+      return result;
+    }
+    if (op.equals("status")) return virtualDisplayStatus();
+    return errorJson("unsupported virtual display op " + op);
+  }
+
+  private JSONObject startVirtualDisplay(String name, int width, int height, int dpi)
+      throws JSONException {
+    synchronized (virtualDisplayLock) {
+      releaseVirtualDisplayLocked();
+      ImageReader reader = null;
+      try {
+        reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2);
+        reader.setOnImageAvailableListener(new ImageReader.OnImageAvailableListener() {
+          @Override
+          public void onImageAvailable(ImageReader source) {
+            Image image = null;
+            try {
+              image = source.acquireLatestImage();
+            } catch (RuntimeException ignored) {
+            } finally {
+              if (image != null) image.close();
+            }
+          }
+        }, new Handler(Looper.getMainLooper()));
+        Surface surface = reader.getSurface();
+        int flags = DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC
+            | DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
+            | DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION
+            | VIRTUAL_DISPLAY_FLAG_SUPPORTS_TOUCH
+            | VIRTUAL_DISPLAY_FLAG_DESTROY_CONTENT_ON_REMOVAL;
+        VirtualDisplay display = displayManager().createVirtualDisplay(
+            name, width, height, dpi, surface, flags);
+        if (display == null) {
+          reader.close();
+          return errorJson("could not create virtual display");
+        }
+        virtualDisplay = display;
+        virtualDisplayReader = reader;
+        virtualDisplayName = name;
+        Display displayInfo = display.getDisplay();
+        virtualDisplayId = displayInfo == null ? -1 : displayInfo.getDisplayId();
+        if (virtualDisplayId < 0) {
+          releaseVirtualDisplayLocked();
+          return errorJson("virtual display has no display id");
+        }
+        JSONObject result = new JSONObject();
+        result.put("ok", true);
+        result.put("active", true);
+        result.put("displayId", virtualDisplayId);
+        result.put("name", name);
+        result.put("width", width);
+        result.put("height", height);
+        result.put("densityDpi", dpi);
+        return result;
+      } catch (RuntimeException error) {
+        if (reader != null) reader.close();
+        return errorJson("virtual display failed: " + error);
+      }
+    }
+  }
+
+  private JSONObject virtualDisplayStatus() throws JSONException {
+    JSONObject result = new JSONObject();
+    synchronized (virtualDisplayLock) {
+      boolean active = virtualDisplay != null && virtualDisplayId >= 0;
+      result.put("ok", true);
+      result.put("active", active);
+      if (active) {
+        result.put("displayId", virtualDisplayId);
+        result.put("name", virtualDisplayName);
+        Display display = virtualDisplay.getDisplay();
+        if (display != null) {
+          DisplayMetrics metrics = displayMetrics(display);
+          result.put("width", metrics.widthPixels);
+          result.put("height", metrics.heightPixels);
+          result.put("densityDpi", metrics.densityDpi);
+        }
+      }
+    }
+    return result;
+  }
+
+  private void releaseVirtualDisplayLocked() {
+    if (virtualDisplay != null) {
+      virtualDisplay.release();
+      virtualDisplay = null;
+    }
+    if (virtualDisplayReader != null) {
+      virtualDisplayReader.close();
+      virtualDisplayReader = null;
+    }
+    virtualDisplayId = -1;
+    virtualDisplayName = "";
+  }
+
+  // ---------------------------------------------------------------------------
+  // Display helpers
+
+  private JSONObject displays() throws JSONException {
+    DisplayManager manager = displayManager();
+    JSONArray array = new JSONArray();
+    for (Display display : manager.getDisplays()) {
+      DisplayMetrics metrics = displayMetrics(display);
+      int flags = display.getFlags();
+      JSONObject item = new JSONObject();
+      item.put("id", display.getDisplayId());
+      item.put("name", display.getName());
+      item.put("width", metrics.widthPixels);
+      item.put("height", metrics.heightPixels);
+      item.put("densityDpi", metrics.densityDpi);
+      item.put("flags", flags);
+      item.put("default", display.getDisplayId() == Display.DEFAULT_DISPLAY);
+      item.put("presentation", (flags & Display.FLAG_PRESENTATION) != 0);
+      item.put("private", (flags & Display.FLAG_PRIVATE) != 0);
+      item.put("secure", (flags & Display.FLAG_SECURE) != 0);
+      item.put("state", display.getState());
+      item.put("rotation", display.getRotation());
+      item.put("valid", display.isValid());
+      array.put(item);
+    }
+    JSONObject result = new JSONObject();
+    result.put("ok", true);
+    result.put("displays", array);
+    return result;
   }
 
   // ---------------------------------------------------------------------------

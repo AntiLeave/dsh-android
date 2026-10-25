@@ -207,12 +207,31 @@ check_bridge() {
   fi
 }
 
+check_shizuku() {
+  if ! command -v curl >/dev/null 2>&1; then
+    return 0
+  fi
+  STATUS=$(curl -fsS --max-time 3 "$BRIDGE_URL/shizuku" 2>/dev/null || true)
+  case "$STATUS" in
+    *'"running":true'*'"granted":true'*)
+      echo "shizuku: ok"
+      ;;
+    *'"running":true'*)
+      echo "shizuku: running, permission not granted (open Shizuku and allow DSH Bridge)"
+      ;;
+    *)
+      echo "shizuku: not running (android_shell and virtual-screen launch need Shizuku)"
+      ;;
+  esac
+}
+
 do_install() {
   open_bridge_installer
   setup_termux
   wake_lock
   start_dsh
   check_bridge
+  check_shizuku
 }
 
 do_uninstall() {
@@ -237,6 +256,7 @@ case "$ACTION" in
       wake_lock
       start_dsh
       check_bridge
+      check_shizuku
     fi
     ;;
   stop)

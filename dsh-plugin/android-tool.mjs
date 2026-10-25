@@ -58,6 +58,17 @@ async function runShell(command, signal, timeoutMs = 30000) {
     )
   })
 }
+async function runBridgeShell(command, signal, timeoutMs = 30000) {
+  const result = await bridge('/shell', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ command }),
+    signal,
+    timeoutMs,
+  })
+  return { code: result.code, output: result.output ?? '' }
+}
+
 function act(args, signal, timeoutMs) {
   return bridge('/action', {
     method: 'POST',
@@ -106,6 +117,10 @@ const actParameters = {
       ],
       description: 'Operation to perform on the device.',
     },
+    displayId: {
+      type: 'number',
+      description: 'Logical display id from android_virtual_screen or the /displays bridge endpoint. Default 0 (physical screen).',
+    },
     ...commonTarget,
     x: { type: 'number', description: 'Screen x coordinate for tap.' },
     y: { type: 'number', description: 'Screen y coordinate for tap.' },
@@ -142,6 +157,7 @@ export function apply(ctx) {
       properties: {
         maxDepth: { type: 'number', description: 'Maximum tree depth, default 28.' },
         maxElements: { type: 'number', description: 'Maximum nodes, default 600.' },
+        displayId: { type: 'number', description: 'Logical display id; default 0 (physical screen).' },
       },
       additionalProperties: false,
     },
@@ -152,10 +168,11 @@ export function apply(ctx) {
     async execute(args, exec) {
       const depth = Math.max(1, Math.min(80, number(args.maxDepth, 28)))
       const elements = Math.max(1, Math.min(3000, number(args.maxElements, 600)))
-      const state = await bridge(`/state?maxDepth=${depth}&maxElements=${elements}`, {
+      const displayId = Math.max(0, number(args.displayId, 0))
+      const state = await bridge(`/state?maxDepth=${depth}&maxElements=${elements}&displayId=${displayId}`, {
         signal: exec.signal,
       })
-      return `seq=${state.seq} package=${state.package} activity=${state.activity} truncated=${state.truncated}\n${state.text}`
+      return `seq=${state.seq} display=${state.displayId} package=${state.package} activity=${state.activity} truncated=${state.truncated}\n${state.text}`
     },
   })
 
@@ -170,11 +187,13 @@ export function apply(ctx) {
     },
     async execute(args, exec) {
       const op = String(args.op)
+      const displayId = Math.max(0, number(args.displayId, 0))
+      const actOn = value => act({ ...value, displayId })
       const timeout = { signal: AbortSignal.any([exec.signal, AbortSignal.timeout(20000)]) }
       switch (op) {
         case 'click':
         case 'long_click': {
-          const result = await act({
+          const result = await actOn({
             op: op === 'long_click' ? 'longClick' : 'click',
             ...(args.id === undefined ? {} : { id: args.id }),
             ...(args.text === undefined ? {} : { text: args.text }),
@@ -186,7 +205,7 @@ export function apply(ctx) {
         case 'set_text':
         case 'type_text':
         case 'clear_text': {
-          const result = await act({
+          const result = await actOn({
             op: op === 'set_text' ? 'setText' : op === 'type_text' ? 'typeText' : 'clearText',
             ...(args.id === undefined ? {} : { id: args.id }),
             ...(args.text === undefined ? {} : { text: args.text }),
@@ -194,7 +213,7 @@ export function apply(ctx) {
           return `${result.message}`
         }
         case 'scroll': {
-          const result = await act({
+          const result = await actOn({
             op: 'scroll',
             ...(args.id === undefined ? {} : { id: args.id }),
             ...(args.direction === undefined ? {} : { direction: args.direction }),
@@ -203,7 +222,7 @@ export function apply(ctx) {
           return `${result.message}`
         }
         case 'swipe': {
-          const result = await act({
+          const result = await actOn({
             op: 'swipe',
             fromX: args.fromX ?? args.x,
             fromY: args.fromY ?? args.y,
@@ -214,7 +233,7 @@ export function apply(ctx) {
           return `${result.message}`
         }
         case 'tap': {
-          const result = await act({
+          const result = await actOn({
             op: 'tap',
             x: args.x,
             y: args.y,
@@ -223,13 +242,22 @@ export function apply(ctx) {
           return `${result.message}`
         }
         case 'global': {
-          const result = await act({ op: 'global', action: args.global ?? 'back' })
+          if (displayId !== 0) {
+            const key = { back: 4, home: 3, recents: 187 }[args.global ?? 'back']
+            if (!key) throw new Error('only back, home and recents are supported on a virtual display')
+            const command = `input -d ${displayId} keyevent ${key}`
+            const result = NO_ROOT
+              ? await runBridgeShell(command, exec.signal, 15000)
+              : await runShell(command, exec.signal, 15000)
+            return `exit=${result.code}\n${result.output}`
+          }
+          const result = await actOn({ op: 'global', action: args.global ?? 'back' })
           return `${result.message}`
         }
         case 'launch': {
           if (NO_ROOT) {
             if (!args.package && !args.app) throw new Error('launch needs package or app')
-            const result = await act({
+            const result = await actOn({
               op: 'launch',
               ...(args.package === undefined ? {} : { package: args.package }),
               ...(args.app === undefined ? {} : { app: args.app }),
@@ -246,6 +274,14 @@ export function apply(ctx) {
             pkg = match?.package
           }
           if (!pkg) throw new Error('launch needs package, or an app label that matches an installed app')
+          if (displayId !== 0) {
+            const launched = await runShell(
+              `am start --display ${displayId} -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p ${shellQuote(pkg)} 2>&1`,
+              exec.signal,
+              15000,
+            )
+            return `launch ${pkg} on display ${displayId} exit=${launched.code}\n${launched.output}`
+          }
           const launched = await runShell(
             `monkey -p ${pkg} -c android.intent.category.LAUNCHER 1 2>&1`,
             exec.signal,
@@ -256,24 +292,27 @@ export function apply(ctx) {
         case 'open_url': {
           if (!args.url) throw new Error('open_url needs url')
           if (NO_ROOT) {
-            const result = await act({ op: 'openUrl', url: args.url })
+            const result = await actOn({ op: 'openUrl', url: args.url })
             return `${result.message}`
           }
+          const displayArg = displayId === 0 ? '' : ` --display ${displayId}`
           const opened = await runShell(
-            `am start -a android.intent.action.VIEW -d ${shellQuote(args.url)}`,
+            `am start${displayArg} -a android.intent.action.VIEW -d ${shellQuote(args.url)}`,
             exec.signal,
             15000,
           )
-          if (opened.code === 0) return `opened ${args.url}\n${opened.output}`
-          const result = await act({ op: 'openUrl', url: args.url })
+          if (opened.code === 0) {
+            return `opened ${args.url}${displayId === 0 ? '' : ` on display ${displayId}`}\n${opened.output}`
+          }
+          const result = await actOn({ op: 'openUrl', url: args.url })
           return `${result.message}`
         }
         case 'clipboard': {
-          const result = await act({ op: 'clipboard', text: args.text ?? '' })
+          const result = await actOn({ op: 'clipboard', text: args.text ?? '' })
           return `${result.message}`
         }
         case 'wait': {
-          const result = await act({
+          const result = await actOn({
             op: 'wait',
             ...(args.text === undefined ? {} : { text: args.text }),
             ...(args.package === undefined ? {} : { package: args.package }),
@@ -282,7 +321,7 @@ export function apply(ctx) {
           return `${result.message} seq=${result.seq ?? ''}`
         }
         case 'find': {
-          const result = await act({
+          const result = await actOn({
             op: 'find',
             ...(args.text === undefined ? {} : { text: args.text }),
             ...(args.desc === undefined ? {} : { desc: args.desc }),
@@ -321,6 +360,7 @@ export function apply(ctx) {
       properties: {
         maxWidth: { type: 'number', description: 'Maximum image width, default 720.' },
         quality: { type: 'number', description: 'JPEG quality 20-100, default 80.' },
+        displayId: { type: 'number', description: 'Logical display id; default 0 (physical screen).' },
       },
       additionalProperties: false,
     },
@@ -353,7 +393,8 @@ export function apply(ctx) {
     async execute(args, exec) {
       const maxWidth = Math.max(1, Math.min(2160, number(args.maxWidth, 720)))
       const quality = Math.max(20, Math.min(100, number(args.quality, 80)))
-      const shot = await bridge(`/screenshot?maxWidth=${maxWidth}&quality=${quality}`, {
+      const displayId = Math.max(0, number(args.displayId, 0))
+      const shot = await bridge(`/screenshot?maxWidth=${maxWidth}&quality=${quality}&displayId=${displayId}`, {
         signal: exec.signal,
       })
       const fs = await import('node:fs/promises')
@@ -386,14 +427,69 @@ export function apply(ctx) {
     },
   })
 
-  if (!NO_ROOT) ctx.tools.register({
-    name: 'android_shell',
+  ctx.tools.register({
+    name: 'android_virtual_screen',
     description:
-      'Run an arbitrary root shell command on the Android device through Termux su. Use this for capabilities the accessibility bridge does not expose: input keyevent, screencap, am/pm/settings/svc, dumpsys, file access. Requires the Termux app to hold Magisk root. Returns exit code, stdout and stderr.',
+      'Manage a headless Android virtual display for the agent. start creates a secondary display that apps can run on while the owner keeps using the physical screen; stop removes it; status reports it. Use the returned displayId with android_state, android_act and android_screenshot.',
     parameters: {
       type: 'object',
       properties: {
-        command: { type: 'string', description: 'Shell command to run as root.' },
+        op: { type: 'string', enum: ['start', 'stop', 'status'] },
+        width: { type: 'number', description: 'Virtual display width, default 1280.' },
+        height: { type: 'number', description: 'Virtual display height, default 720.' },
+        dpi: { type: 'number', description: 'Virtual display density, default 160.' },
+      },
+      required: ['op'],
+      additionalProperties: false,
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => text(value),
+    },
+    async execute(args, exec) {
+      const op = String(args.op)
+      if (op === 'status') {
+        const status = await bridge('/virtualdisplay', { signal: exec.signal })
+        const displays = await bridge('/displays', { signal: exec.signal })
+        return JSON.stringify({
+          active: status.active,
+          displayId: status.displayId,
+          displays: displays.displays,
+        }, null, 2)
+      }
+      if (op === 'stop') {
+        const status = await bridge('/virtualdisplay', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ op: 'stop' }),
+          signal: exec.signal,
+        })
+        return `virtual display stopped: ${JSON.stringify(status)}`
+      }
+      if (op !== 'start') throw new Error(`unsupported virtual screen op: ${op}`)
+
+      const width = Math.max(320, Math.min(3840, Math.round(number(args.width, 1280))))
+      const height = Math.max(240, Math.min(3840, Math.round(number(args.height, 720))))
+      const dpi = Math.max(120, Math.min(640, Math.round(number(args.dpi, 160))))
+      const status = await bridge('/virtualdisplay', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ op: 'start', width, height, dpi, name: 'dsh-virtual' }),
+        signal: exec.signal,
+      })
+      return `displayId=${status.displayId} ${status.width}x${status.height} ${status.densityDpi}dpi name=${status.name}`
+    },
+  })
+
+  ctx.tools.register({
+    name: 'android_shell',
+    description: NO_ROOT
+      ? 'Run a shell command through the Bridge Shizuku service (Android shell/root UID, depending on how Shizuku was started). Use for input keyevent, screencap, am/pm/settings/svc, dumpsys. Requires Shizuku running and DSH Bridge granted Shizuku permission. Returns exit code, stdout and stderr.'
+      : 'Run an arbitrary root shell command on the Android device through Termux su. Use this for capabilities the accessibility bridge does not expose: input keyevent, screencap, am/pm/settings/svc, dumpsys, file access. Requires the Termux app to hold Magisk root. Returns exit code, stdout and stderr.',
+    parameters: {
+      type: 'object',
+      properties: {
+        command: { type: 'string', description: 'Shell command to run.' },
         timeoutMs: { type: 'number', description: 'Timeout, default 30000.' },
       },
       required: ['command'],
@@ -404,11 +500,9 @@ export function apply(ctx) {
       render: (_args, value) => text(value),
     },
     async execute(args, exec) {
-      const result = await runShell(
-        String(args.command),
-        exec.signal,
-        number(args.timeoutMs, 30000),
-      )
+      const result = NO_ROOT
+        ? await runBridgeShell(String(args.command), exec.signal, number(args.timeoutMs, 30000))
+        : await runShell(String(args.command), exec.signal, number(args.timeoutMs, 30000))
       return `exit=${result.code}\n${result.output}`
     },
   })
@@ -429,7 +523,7 @@ export function apply(ctx) {
 
   console.log(
     NO_ROOT
-      ? '[android-cua] registered android_state, android_act, android_apps, android_screenshot, android_health (no-root)'
-      : '[android-cua] registered android_state, android_act, android_apps, android_screenshot, android_shell, android_health',
+      ? '[android-cua] registered android_state, android_act, android_apps, android_screenshot, android_virtual_screen, android_shell, android_health (no-root/Shizuku)'
+      : '[android-cua] registered android_state, android_act, android_apps, android_screenshot, android_virtual_screen, android_shell, android_health',
   )
 }
