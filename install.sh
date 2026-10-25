@@ -69,7 +69,7 @@ prepare_scripts() {
 }
 
 do_stop() {
-  pkill -f "[l]ib/bin.js --profile web" 2>/dev/null && echo "dsh stopped" || true
+  pkill -f "[.]dsh/android.cordis.yml" 2>/dev/null && echo "dsh stopped" || true
   CURRENT=$(settings get secure enabled_accessibility_services)
   [ "$CURRENT" = "null" ] && CURRENT=""
   NEW=$(printf '%s' "$CURRENT" | sed "s#$BRIDGE_SERVICE##g; s#::#:#g; s#^:##; s#:\$##")
@@ -234,7 +234,7 @@ run_setup() {
 }
 
 start_dsh() {
-  pkill -f "[l]ib/bin.js --profile web" 2>/dev/null || true
+  pkill -f "[.]dsh/android.cordis.yml" 2>/dev/null || true
   sleep 2
   run_root ': > "$HOME/dsh-root.log"; rm -f "$HOME/dsh-root.pid"' >/dev/null 2>&1 || true
   run_root "DSH_WEB_HOST=$HOST DSH_WEB_PORT=$PORT sh /data/local/tmp/start-dsh-root.sh" >/dev/null 2>&1 || true

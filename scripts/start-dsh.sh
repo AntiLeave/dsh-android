@@ -8,6 +8,7 @@ PORT="${DSH_WEB_PORT:-3080}"
 DSH_HOME="$HOME/.dsh-noroot"
 
 export PATH="$PREFIX/bin:$PATH"
+export TMPDIR="${TMPDIR:-$PREFIX/tmp}"
 export DSH_HOME
 export DSH_ANDROID_NO_ROOT=1
 mkdir -p "$DSH_HOME"

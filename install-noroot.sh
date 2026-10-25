@@ -99,7 +99,7 @@ stop_dsh() {
     rm -f "$HOME/dsh.pid"
   fi
   if command -v pkill >/dev/null 2>&1; then
-    pkill -f "[l]ib/bin.js --profile web" >/dev/null 2>&1 || true
+    pkill -f "[.]dsh-noroot/" >/dev/null 2>&1 || true
   fi
   sleep 1
   if command -v termux-wake-unlock >/dev/null 2>&1; then
