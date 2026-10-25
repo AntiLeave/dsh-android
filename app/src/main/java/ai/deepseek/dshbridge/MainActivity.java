@@ -8,12 +8,15 @@ import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.Insets;
 import android.graphics.Typeface;
+import android.net.Uri;
 import android.os.Bundle;
 import android.provider.Settings;
+import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowInsets;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -29,14 +32,19 @@ import java.nio.charset.StandardCharsets;
 public final class MainActivity extends Activity {
   private static final String PREFS = "dsh";
   private static final String PREF_URL = "root_url";
+  private static final String PREF_PORT = "port";
+  private static final String PREF_MODE = "mode";
 
   private TextView status;
   private Button startRoot;
+  private Button startShizuku;
   private Button stopDsh;
   private Button openDsh;
   private Button copyUrl;
+  private EditText portInput;
   private SharedPreferences preferences;
   private String dshUrl = "";
+  private String dshMode = "";
   private String lastLog = "";
   private boolean dshBusy;
 
@@ -45,6 +53,10 @@ public final class MainActivity extends Activity {
     super.onCreate(savedInstanceState);
     preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
     dshUrl = preferences.getString(PREF_URL, "");
+    dshMode = preferences.getString(PREF_MODE, "");
+    int defaultPort = 3080;
+    Uri storedUrl = Uri.parse(dshUrl);
+    if (storedUrl.getPort() > 0) defaultPort = storedUrl.getPort();
 
     ScrollView scroll = new ScrollView(this);
     LinearLayout root = new LinearLayout(this);
@@ -61,13 +73,26 @@ public final class MainActivity extends Activity {
 
     TextView help = new TextView(this);
     help.setText("1. Enable \"DSH Accessibility Bridge\" in Settings > Accessibility.\n"
-        + "2. Start the harness with the buttons below (root is required for now).\n"
+        + "2. Choose the Web UI port, then start with root or Shizuku.\n"
         + "3. Use Open Web UI to open the harness; it never opens automatically.\n"
         + "4. The bridge listens only on 127.0.0.1:17654.");
     help.setTextSize(15);
     help.setTextColor(Color.DKGRAY);
     help.setPadding(0, dp(14), 0, dp(14));
     root.addView(help, matchWrap());
+
+    TextView portLabel = new TextView(this);
+    portLabel.setText("Web UI port");
+    portLabel.setTextSize(14);
+    portLabel.setTextColor(Color.DKGRAY);
+    root.addView(portLabel, matchWrap());
+
+    portInput = new EditText(this);
+    portInput.setInputType(InputType.TYPE_CLASS_NUMBER);
+    portInput.setSingleLine(true);
+    portInput.setSelectAllOnFocus(true);
+    portInput.setText(preferences.getString(PREF_PORT, String.valueOf(defaultPort)));
+    root.addView(portInput, matchWrap());
 
     startRoot = new Button(this);
     startRoot.setText("Start DSH (root)");
@@ -78,6 +103,16 @@ public final class MainActivity extends Activity {
       }
     });
     root.addView(startRoot, matchWrap());
+
+    startShizuku = new Button(this);
+    startShizuku.setText("Start DSH (Shizuku)");
+    startShizuku.setOnClickListener(new View.OnClickListener() {
+      @Override
+      public void onClick(View view) {
+        startNoRootDsh();
+      }
+    });
+    root.addView(startShizuku, matchWrap());
 
     stopDsh = new Button(this);
     stopDsh.setText("Stop DSH");
@@ -159,6 +194,8 @@ public final class MainActivity extends Activity {
   }
 
   private void startRootDsh() {
+    final int port = readPort();
+    if (port < 0) return;
     dshBusy = true;
     lastLog = "";
     updateDshButtons();
@@ -187,21 +224,63 @@ public final class MainActivity extends Activity {
               status.setText(lastLog.isEmpty() ? "dsh did not return a Web UI URL." : lastLog);
             } else {
               dshUrl = url;
-              preferences.edit().putString(PREF_URL, dshUrl).apply();
+              dshMode = "root";
+              preferences.edit()
+                  .putString(PREF_URL, dshUrl)
+                  .putString(PREF_MODE, dshMode)
+                  .apply();
               status.setText(lastLog.isEmpty() ? url : lastLog);
             }
             updateDshButtons();
           }
         });
       }
-    });
+    }, port);
+  }
+
+  private void startNoRootDsh() {
+    final int port = readPort();
+    if (port < 0) return;
+    dshBusy = true;
+    lastLog = "";
+    updateDshButtons();
+    status.setText("Starting dsh through Shizuku/Termux...");
+    DshLauncher.startNoRoot(this, new DshLauncher.Callback() {
+      @Override
+      public void onProgress(String log) {
+      }
+
+      @Override
+      public void onResult(final String url, final String error) {
+        runOnUiThread(new Runnable() {
+          @Override
+          public void run() {
+            dshBusy = false;
+            if (error != null) {
+              status.setText(error);
+            } else if (url == null || url.isEmpty()) {
+              status.setText("dsh did not return a Web UI URL.");
+            } else {
+              dshUrl = url;
+              dshMode = "noroot";
+              preferences.edit()
+                  .putString(PREF_URL, dshUrl)
+                  .putString(PREF_MODE, dshMode)
+                  .apply();
+              status.setText("dsh is running through Shizuku/Termux.\n" + dshUrl);
+            }
+            updateDshButtons();
+          }
+        });
+      }
+    }, port);
   }
 
   private void stopDsh() {
     dshBusy = true;
     updateDshButtons();
     status.setText("Stopping dsh...");
-    DshLauncher.stopRoot(new DshLauncher.Callback() {
+    DshLauncher.Callback callback = new DshLauncher.Callback() {
       @Override
       public void onProgress(String log) {
       }
@@ -216,15 +295,35 @@ public final class MainActivity extends Activity {
               status.setText(error);
             } else {
               dshUrl = "";
+              dshMode = "";
               lastLog = "";
-              preferences.edit().remove(PREF_URL).apply();
+              preferences.edit().remove(PREF_URL).remove(PREF_MODE).apply();
               status.setText("dsh stopped.");
             }
             updateDshButtons();
           }
         });
       }
-    });
+    };
+    if ("noroot".equals(dshMode)) {
+      DshLauncher.stopNoRoot(this, callback);
+    } else {
+      DshLauncher.stopRoot(callback);
+    }
+  }
+
+  private int readPort() {
+    String text = portInput.getText().toString().trim();
+    try {
+      int port = Integer.parseInt(text);
+      if (port >= 1 && port <= 65535) {
+        preferences.edit().putString(PREF_PORT, String.valueOf(port)).apply();
+        return port;
+      }
+    } catch (NumberFormatException ignored) {
+    }
+    status.setText("Enter a valid Web UI port (1-65535).");
+    return -1;
   }
 
   private void openWebUi() {
@@ -263,7 +362,9 @@ public final class MainActivity extends Activity {
 
   private void updateDshButtons() {
     startRoot.setEnabled(!dshBusy);
+    startShizuku.setEnabled(!dshBusy);
     stopDsh.setEnabled(!dshBusy);
+    portInput.setEnabled(!dshBusy);
     copyUrl.setEnabled(!dshBusy && !dshUrl.isEmpty());
     openDsh.setEnabled(!dshBusy && !dshUrl.isEmpty());
   }

@@ -92,6 +92,7 @@ public final class BridgeService extends AccessibilityService {
   private volatile long lastEventAt;
   private volatile String currentPackage = "";
   private volatile String currentActivity = "";
+  private volatile String dshUrl = "";
   private final Map<Integer, String> activities = new ConcurrentHashMap<>();
   private int activeDisplayId = Display.DEFAULT_DISPLAY;
   private final Object virtualDisplayLock = new Object();
@@ -296,6 +297,16 @@ public final class BridgeService extends AccessibilityService {
     if (path.equals("/") || path.equals("/health")) {
       return health();
     }
+    if (path.equals("/dsh/status")) {
+      return dshStatus();
+    }
+    if (path.equals("/dsh/clear") && method.equals("POST")) {
+      dshUrl = "";
+      return dshStatus();
+    }
+    if (path.equals("/dsh/register") && method.equals("POST")) {
+      return registerDsh(body);
+    }
     if (path.equals("/shizuku")) {
       if (method.equals("POST")) {
         String text = new String(body, StandardCharsets.UTF_8);
@@ -375,6 +386,27 @@ public final class BridgeService extends AccessibilityService {
       json.put("error", message == null ? "unknown error" : message);
     } catch (JSONException ignored) {
     }
+    return json;
+  }
+
+  private JSONObject dshStatus() throws JSONException {
+    JSONObject json = new JSONObject();
+    json.put("ok", true);
+    json.put("url", dshUrl);
+    return json;
+  }
+
+  private JSONObject registerDsh(byte[] body) throws JSONException {
+    String url = new String(body, StandardCharsets.UTF_8).trim();
+    Uri parsed = Uri.parse(url);
+    String scheme = parsed.getScheme();
+    if (parsed.getHost() == null
+        || (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme))) {
+      return errorJson("invalid dsh url");
+    }
+    dshUrl = url;
+    JSONObject json = new JSONObject();
+    json.put("ok", true);
     return json;
   }
 
