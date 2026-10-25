@@ -88,7 +88,7 @@ LICENSE                 GNU GPL v3
 
 ```powershell
 adb push dsh-android.tar.gz /data/local/tmp/
-adb shell su -c "cd /data/local/tmp && tar -xzf dsh-android.tar.gz && sh dsh-android/install.sh -HOST 10.0.0.100"
+adb shell su -c "cd /data/local/tmp && tar -xzf dsh-android.tar.gz && sh dsh-android/install.sh -HOST 192.168.1.100"
 ```
 
 `-HOST` 是 dsh Web UI 的监听地址：
@@ -99,7 +99,7 @@ adb shell su -c "cd /data/local/tmp && tar -xzf dsh-android.tar.gz && sh dsh-and
 脚本完成后只输出 URL，不自动打开浏览器：
 
 ```text
-http://10.0.0.100:3080/?token=...
+http://192.168.1.100:3080/?token=...
 ```
 
 在浏览器打开该 URL。首次进入需要在 Web UI 里添加 DeepSeek API Key 或登录账号。
@@ -109,7 +109,7 @@ http://10.0.0.100:3080/?token=...
 ```powershell
 git clone <repo-url> dsh-android
 cd dsh-android
-powershell -ExecutionPolicy Bypass -File .\install.ps1 -BindHost 10.0.0.100
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -BindHost 192.168.1.100
 ```
 
 `install.ps1` 会自动：
@@ -178,7 +178,7 @@ bash install-noroot.sh -HOST 127.0.0.1
 需要从 PC/VPN 访问时，把 `-HOST` 改成设备的局域网或 VPN 地址，例如：
 
 ```bash
-bash install-noroot.sh -HOST 10.0.0.100
+bash install-noroot.sh -HOST 192.168.1.100
 ```
 
 脚本会安装/更新 plugins、compat 和 Termux 依赖，然后以普通 Termux 用户启动 dsh，输出 URL。不会自动打开浏览器。
@@ -556,9 +556,16 @@ $PREFIX/lib/node_modules/@deepseek-ai/dsh/node_modules/@img/sharp-wasm32
 
 `android-compat` 插件没有加载，或 Cordis patch 没有包含它。root 模式确认 `~/.dsh/android.cordis.yml`，无 root 模式确认 `~/.dsh-noroot/android.cordis.yml` 同时加载 `android-compat` 和 `android-cua`。
 
-**`sandbox mode "workspace-write"` 不可用**
+**`workspace-write` 下无法使用 `bash`**
 
-`start-dsh-root.sh` 和 `start-dsh.sh` 不再设置 `DSH_PERMISSION_MODE`，dsh 使用默认 `workspace-write`。`android_shell` 在 `workspace-write` 会话中逐次审批；只有手动设置 `danger-full-access` 时才会全部放行。Android 上 workspace-write 的 bash 沙箱后端可能不可用，shell 操作请使用 `android_shell`。
+在 Android/Termux 上，dsh 的 `bash` 工具在 `workspace-write` 下不可用，这不是权限规则本身的问题：
+
+- `dsh-sandbox-local` 只登记 `linux`、`darwin`、`win32` 三个平台；Termux 的 Node 报告 `process.platform === "android"`，平台链为空，dsh 直接抛出 `SANDBOX_UNAVAILABLE`。
+- Android 内核通常未启用 `CONFIG_USER_NS`，也未必启用 Landlock；`bwrap` 和 Landlock 后端不能假定可用。dsh 是 fail-closed，不会在无沙箱状态下执行 `bash`。
+- `read` / `write` / `edit` / `glob` / `grep` 等文件工具仍可用；命令改用 `android_shell`（`workspace-write` 下每次审批），或手动切换到 `danger-full-access`（无 OS 级沙箱）。
+- no-root 模式下 `android_shell` 依赖 Shizuku 已运行并授权。
+
+`start-dsh-root.sh` 和 `start-dsh.sh` 不再设置 `DSH_PERMISSION_MODE`，dsh 使用默认 `workspace-write`；只有手动设置 `danger-full-access` 时才会全部放行。
 
 **`android_shell` 现在需要审批**
 
@@ -626,6 +633,7 @@ dsh 重启或插件重载会轮换 token。查看：
 - 截图对 `FLAG_SECURE` 窗口无效
 - `read_image` / 截图进入模型需要模型支持图片输入
 - dsh 版本固定在 `0.2.1-rc.2`，Node 24；升级 dsh 可能需要重新适配 koffi/node-pty/sharp
+- Android/Termux 的 `workspace-write` 下 `bash` 不可用：dsh 没有 Android 平台沙箱后端，且 Android 内核通常缺少 bwrap/Landlock 所需支持；使用 `android_shell` 或切换 `danger-full-access`
 - 无 root 模式不提供 root shell；`android_shell` 走 Shizuku，`launch` / `open_url` 依赖 Bridge/Shizuku
 - root 模式 `android_shell` 会把 `su` 的 stdin/stdout/stderr 重定向到临时文件；手动执行 `su -c "am ..."` 若遇到 `Failed transaction` 或 avc denial，也需要加 `</dev/null >/dev/null 2>&1`
 - 无 root 模式不会自动安装 APK、启用无障碍或修改 appops；这些需要手动完成
