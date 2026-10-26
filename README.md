@@ -243,6 +243,27 @@ bash install-noroot.sh -uninstall  # 清理插件/compat/启动脚本；不卸�
 -KeepDeployBundle        保留临时部署目录，便于排查
 ```
 
+## 安装 dsh npm 插件
+
+不是直接在 profile 目录里执行 `npm install`；要让 dsh 把插件写入对应 profile，需在 Termux 中执行。先确保有 `pnpm`：
+
+```bash
+pkg install pnpm
+```
+
+```bash
+# root 模式（默认 profile 目录 ~/.dsh）
+node "$PREFIX/lib/node_modules/@deepseek-ai/dsh/lib/bin.js" \
+  plugin --profile web add <npm-package>
+
+# no-root 模式（独立 profile 目录 ~/.dsh-noroot）
+DSH_HOME="$HOME/.dsh-noroot" \
+  node "$PREFIX/lib/node_modules/@deepseek-ai/dsh/lib/bin.js" \
+  plugin --profile web add <npm-package>
+```
+
+安装后重启对应 dsh 进程生效。
+
 ## Android 工具
 
 插件注册的模型工具：
