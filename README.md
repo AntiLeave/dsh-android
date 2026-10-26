@@ -87,22 +87,22 @@ LICENSE                 GNU GPL v3
 `install.sh` 会自动检测。
 
 ```powershell
-adb push dsh-android.tar.gz /data/local/tmp/
-adb shell su -c "cd /data/local/tmp && tar -xzf dsh-android.tar.gz && sh dsh-android/install.sh -HOST 192.168.1.100"
+adb push .\dsh-android.tar.gz /data/local/tmp/
+adb shell "su -c 'tar -xzf /data/local/tmp/dsh-android.tar.gz -C /data/local/tmp && sh /data/local/tmp/dsh-android/install.sh -HOST 127.0.0.1'"
 ```
 
 `-HOST` 是 dsh Web UI 的监听地址：
 
-- 只用设备浏览器访问：`-HOST 127.0.0.1`（默认）
+- 只用设备本机访问：`-HOST 127.0.0.1`（默认）
 - 从 PC / VPN 访问：填设备在局域网或 VPN 中的地址
 
 脚本完成后只输出 URL，不自动打开浏览器：
 
 ```text
-http://192.168.1.100:3080/?token=...
+http://127.0.0.1:3080/?token=...
 ```
 
-在浏览器打开该 URL。首次进入需要在 Web UI 里添加 DeepSeek API Key 或登录账号。
+root 安装请把压缩包解压到 `/data/local/tmp`，不要把 APK 放在 `/sdcard` 后直接运行；`pm install` 无法读取 FUSE 路径。
 
 ### 方式二：PC 一键部署
 
