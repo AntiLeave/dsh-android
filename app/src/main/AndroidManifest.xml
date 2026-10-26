@@ -30,7 +30,8 @@
       android:name=".DshWebActivity"
       android:exported="false"
       android:label="DSH Web UI"
-      android:theme="@style/AppTheme" />
+      android:theme="@style/AppTheme"
+      android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|navigation" />
 
     <provider
       android:name="rikka.shizuku.ShizukuProvider"
