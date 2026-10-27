@@ -18,10 +18,12 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.WindowInsets;
 import android.widget.Button;
+import android.widget.CompoundButton;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
+import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -39,6 +41,7 @@ public final class MainActivity extends Activity {
   private static final String PREF_HOST = "host";
   private static final String PREF_MODE = "mode";
   private static final String PREF_BUBBLE_SIZE = "bubble_size";
+  private static final String PREF_AUTO_SHOW = "auto_show";
 
   private TextView status;
   private Button startRoot;
@@ -146,8 +149,23 @@ public final class MainActivity extends Activity {
       }
     });
     LinearLayout.LayoutParams bubbleSizeParams = matchWrap();
-    bubbleSizeParams.bottomMargin = dp(16);
+    bubbleSizeParams.bottomMargin = dp(8);
     root.addView(bubbleSizeBar, bubbleSizeParams);
+
+    Switch autoShow = new Switch(this);
+    autoShow.setText("Auto show floating DSH on approval or completion");
+    autoShow.setTextSize(14);
+    autoShow.setTextColor(getColor(R.color.text_primary));
+    autoShow.setChecked(preferences.getBoolean(PREF_AUTO_SHOW, true));
+    autoShow.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+      @Override
+      public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+        preferences.edit().putBoolean(PREF_AUTO_SHOW, isChecked).apply();
+      }
+    });
+    LinearLayout.LayoutParams autoShowParams = matchWrap();
+    autoShowParams.bottomMargin = dp(16);
+    root.addView(autoShow, autoShowParams);
 
     startRoot = new Button(this);
     startRoot.setText("Start DSH (root)");

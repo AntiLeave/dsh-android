@@ -50,6 +50,7 @@ public final class FloatingDshService extends Service {
   private static final String EXTRA_BUBBLE_SIZE = "bubble_size";
   private static final String PREFS = "dsh";
   private static final String PREF_BUBBLE_SIZE = "bubble_size";
+  private static final String PREF_AUTO_SHOW = "auto_show";
   private static volatile boolean showing;
   private static volatile boolean serviceRunning;
 
@@ -223,6 +224,7 @@ public final class FloatingDshService extends Service {
   }
 
   private void autoOpen(final boolean forApproval) {
+    if (!getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(PREF_AUTO_SHOW, true)) return;
     new Handler(Looper.getMainLooper()).post(new Runnable() {
       @Override
       public void run() {
