@@ -21,6 +21,7 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -37,6 +38,7 @@ public final class MainActivity extends Activity {
   private static final String PREF_PORT = "port";
   private static final String PREF_HOST = "host";
   private static final String PREF_MODE = "mode";
+  private static final String PREF_BUBBLE_SIZE = "bubble_size";
 
   private TextView status;
   private Button startRoot;
@@ -48,6 +50,8 @@ public final class MainActivity extends Activity {
   private Button testBridge;
   private EditText hostInput;
   private EditText portInput;
+  private SeekBar bubbleSizeBar;
+  private TextView bubbleSizeValue;
   private SharedPreferences preferences;
   private String dshUrl = "";
   private String dshMode = "";
@@ -112,6 +116,38 @@ public final class MainActivity extends Activity {
     portInput.setTextColor(getColor(R.color.text_primary));
     portInput.setText(preferences.getString(PREF_PORT, String.valueOf(defaultPort)));
     root.addView(portInput, matchWrap());
+    bubbleSizeValue = new TextView(this);
+    int bubbleSize = preferences.getInt(PREF_BUBBLE_SIZE, 58);
+    bubbleSize = Math.max(36, Math.min(96, bubbleSize));
+    bubbleSizeValue.setText("Floating ball size: " + bubbleSize + "dp");
+    bubbleSizeValue.setTextSize(14);
+    bubbleSizeValue.setTextColor(getColor(R.color.label_color));
+    bubbleSizeValue.setPadding(0, dp(12), 0, 0);
+    root.addView(bubbleSizeValue, matchWrap());
+
+    bubbleSizeBar = new SeekBar(this);
+    bubbleSizeBar.setMax(60);
+    bubbleSizeBar.setProgress(bubbleSize - 36);
+    bubbleSizeBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+      @Override
+      public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+        int size = 36 + progress;
+        bubbleSizeValue.setText("Floating ball size: " + size + "dp");
+        preferences.edit().putInt(PREF_BUBBLE_SIZE, size).apply();
+        if (fromUser) FloatingDshService.updateBubbleSize(MainActivity.this, size);
+      }
+
+      @Override
+      public void onStartTrackingTouch(SeekBar seekBar) {
+      }
+
+      @Override
+      public void onStopTrackingTouch(SeekBar seekBar) {
+      }
+    });
+    LinearLayout.LayoutParams bubbleSizeParams = matchWrap();
+    bubbleSizeParams.bottomMargin = dp(16);
+    root.addView(bubbleSizeBar, bubbleSizeParams);
 
     startRoot = new Button(this);
     startRoot.setText("Start DSH (root)");
@@ -164,7 +200,7 @@ public final class MainActivity extends Activity {
     root.addView(openDsh, matchWrap());
 
     floatingDsh = new Button(this);
-    floatingDsh.setText("Show floating DSH");
+    floatingDsh.setText("Start floating DSH");
     floatingDsh.setOnClickListener(new View.OnClickListener() {
       @Override
       public void onClick(View view) {
@@ -366,7 +402,7 @@ public final class MainActivity extends Activity {
       dshMode = "";
       lastLog = "";
       preferences.edit().remove(PREF_URL).remove(PREF_MODE).apply();
-      if (FloatingDshService.isShowing()) FloatingDshService.hide(this);
+      if (FloatingDshService.isRunning()) FloatingDshService.close(this);
       status.setText("dsh stopped.");
     }
     updateDshButtons();
@@ -411,10 +447,10 @@ public final class MainActivity extends Activity {
   }
 
   private void toggleFloatingDsh() {
-    if (FloatingDshService.isShowing()) {
-      FloatingDshService.hide(this);
+    if (FloatingDshService.isRunning()) {
+      FloatingDshService.close(this);
       updateFloatingButton();
-      Toast.makeText(this, "Floating DSH hidden", Toast.LENGTH_SHORT).show();
+      Toast.makeText(this, "Floating DSH stopped", Toast.LENGTH_SHORT).show();
       return;
     }
     if (dshUrl.isEmpty()) {
@@ -422,7 +458,7 @@ public final class MainActivity extends Activity {
       return;
     }
     if (!Settings.canDrawOverlays(this)) {
-      status.setText("Grant display over other apps, then tap Show floating DSH again.");
+      status.setText("Grant display over other apps, then tap Start floating DSH again.");
       try {
         Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
             Uri.parse("package:" + getPackageName()));
@@ -438,15 +474,15 @@ public final class MainActivity extends Activity {
       requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 4102);
     }
     FloatingDshService.show(this, dshUrl);
-    floatingDsh.setText("Hide floating DSH");
+    floatingDsh.setText("Stop floating DSH");
     floatingDsh.setEnabled(true);
-    Toast.makeText(this, "Floating DSH shown", Toast.LENGTH_SHORT).show();
+    Toast.makeText(this, "Floating DSH started", Toast.LENGTH_SHORT).show();
   }
 
   private void updateFloatingButton() {
     if (floatingDsh == null) return;
-    boolean running = FloatingDshService.isShowing();
-    floatingDsh.setText(running ? "Hide floating DSH" : "Show floating DSH");
+    boolean running = FloatingDshService.isRunning();
+    floatingDsh.setText(running ? "Stop floating DSH" : "Start floating DSH");
     floatingDsh.setEnabled(running || (!dshBusy && !dshUrl.isEmpty()));
   }
 

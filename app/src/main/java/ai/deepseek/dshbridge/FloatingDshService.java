@@ -42,8 +42,15 @@ public final class FloatingDshService extends Service {
   private static final int NOTIFICATION_ID = 4102;
   private static final String ACTION_SHOW = "ai.deepseek.dshbridge.SHOW_FLOATING";
   private static final String ACTION_HIDE = "ai.deepseek.dshbridge.HIDE_FLOATING";
+  private static final String ACTION_TOGGLE = "ai.deepseek.dshbridge.TOGGLE_FLOATING";
+  private static final String ACTION_CLOSE = "ai.deepseek.dshbridge.CLOSE_FLOATING";
+  private static final String ACTION_BUBBLE_SIZE = "ai.deepseek.dshbridge.BUBBLE_SIZE";
   private static final String EXTRA_URL = "url";
+  private static final String EXTRA_BUBBLE_SIZE = "bubble_size";
+  private static final String PREFS = "dsh";
+  private static final String PREF_BUBBLE_SIZE = "bubble_size";
   private static volatile boolean showing;
+  private static volatile boolean serviceRunning;
 
   private WindowManager windowManager;
   private WindowManager.LayoutParams windowParams;
@@ -64,6 +71,7 @@ public final class FloatingDshService extends Service {
   private boolean fullscreen;
   private boolean autoOpenedForApproval;
   private int bubbleSize;
+  private int bubbleSizeDp;
   private int panelWidth;
   private int panelHeight;
   private int imeBottom;
@@ -75,6 +83,10 @@ public final class FloatingDshService extends Service {
 
   static boolean isShowing() {
     return showing;
+  }
+
+  static boolean isRunning() {
+    return serviceRunning;
   }
 
   static void show(Context context, String url) {
@@ -95,9 +107,25 @@ public final class FloatingDshService extends Service {
     context.startService(intent);
   }
 
+  static void close(Context context) {
+    showing = false;
+    Intent intent = new Intent(context, FloatingDshService.class);
+    intent.setAction(ACTION_CLOSE);
+    context.startService(intent);
+  }
+
+  static void updateBubbleSize(Context context, int sizeDp) {
+    if (!serviceRunning) return;
+    Intent intent = new Intent(context, FloatingDshService.class);
+    intent.setAction(ACTION_BUBBLE_SIZE);
+    intent.putExtra(EXTRA_BUBBLE_SIZE, sizeDp);
+    context.startService(intent);
+  }
+
   @Override
   public void onCreate() {
     super.onCreate();
+    serviceRunning = true;
     windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
     touchSlop = ViewConfiguration.get(this).getScaledTouchSlop();
     createNotificationChannel();
@@ -107,9 +135,23 @@ public final class FloatingDshService extends Service {
 
   @Override
   public int onStartCommand(Intent intent, int flags, int startId) {
-    if (intent != null && ACTION_HIDE.equals(intent.getAction())) {
-      hideOverlay();
+    String action = intent == null ? "" : intent.getAction();
+    if (ACTION_CLOSE.equals(action)) {
+      destroyOverlay();
       stopSelf();
+      return START_NOT_STICKY;
+    }
+    if (ACTION_TOGGLE.equals(action)) {
+      if (root != null && root.getParent() != null) detachOverlay();
+      else showOverlay(currentUrl);
+      return START_NOT_STICKY;
+    }
+    if (ACTION_BUBBLE_SIZE.equals(action)) {
+      applyBubbleSize(intent.getIntExtra(EXTRA_BUBBLE_SIZE, 58));
+      return START_NOT_STICKY;
+    }
+    if (ACTION_HIDE.equals(action)) {
+      detachOverlay();
       return START_NOT_STICKY;
     }
     String url = intent == null ? "" : intent.getStringExtra(EXTRA_URL);
@@ -127,7 +169,8 @@ public final class FloatingDshService extends Service {
 
   @Override
   public void onDestroy() {
-    hideOverlay();
+    serviceRunning = false;
+    destroyOverlay();
     super.onDestroy();
   }
 
@@ -238,7 +281,8 @@ public final class FloatingDshService extends Service {
     DisplayMetrics metrics = getResources().getDisplayMetrics();
     int screenWidth = metrics.widthPixels;
     int screenHeight = metrics.heightPixels;
-    bubbleSize = dp(58);
+    bubbleSizeDp = Math.max(36, Math.min(96, getSharedPreferences(PREFS, MODE_PRIVATE).getInt(PREF_BUBBLE_SIZE, 58)));
+    bubbleSize = dp(bubbleSizeDp);
     panelWidth = Math.min(screenWidth - dp(24), dp(410));
     panelHeight = Math.min(screenHeight - dp(150), dp(650));
     bubbleX = Math.max(0, screenWidth - bubbleSize - dp(12));
@@ -311,7 +355,7 @@ public final class FloatingDshService extends Service {
     closeButton.setOnClickListener(new View.OnClickListener() {
       @Override
       public void onClick(View view) {
-        hideOverlay();
+        destroyOverlay();
         stopSelf();
       }
     });
@@ -389,7 +433,7 @@ public final class FloatingDshService extends Service {
     bubble.setImageResource(R.drawable.deepseek_favicon);
     bubble.setScaleType(ImageView.ScaleType.FIT_CENTER);
     bubble.setPadding(dp(9), dp(9), dp(9), dp(9));
-    bubble.setBackground(rounded(Color.parseColor("#FAFAFC"), 29));
+    bubble.setBackground(rounded(Color.parseColor("#FAFAFC"), bubbleSizeDp / 2));
     bubble.setContentDescription("Open DSH floating conversation");
     bubble.setOnTouchListener(new DragListener(true));
     root.addView(bubble, new FrameLayout.LayoutParams(bubbleSize, bubbleSize));
@@ -423,6 +467,32 @@ public final class FloatingDshService extends Service {
     setExpanded(false, false);
   }
 
+  private void applyBubbleSize(int sizeDp) {
+    bubbleSizeDp = Math.max(36, Math.min(96, sizeDp));
+    bubbleSize = dp(bubbleSizeDp);
+    if (bubble != null) {
+      FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) bubble.getLayoutParams();
+      if (params != null) {
+        params.width = bubbleSize;
+        params.height = bubbleSize;
+        bubble.setLayoutParams(params);
+      }
+      bubble.setBackground(rounded(Color.parseColor("#FAFAFC"), bubbleSizeDp / 2));
+    }
+    if (windowParams == null) return;
+    bubbleX = clamp(bubbleX, 0, Math.max(0, screenWidth() - bubbleSize));
+    bubbleY = clamp(bubbleY, 0, Math.max(0, screenHeight() - bubbleSize));
+    if (!expanded) {
+      windowParams.width = bubbleSize;
+      windowParams.height = bubbleSize;
+      windowParams.x = bubbleX;
+      windowParams.y = bubbleY;
+      if (root != null && root.getParent() != null) {
+        windowManager.updateViewLayout(root, windowParams);
+      }
+    }
+  }
+
   private void showOverlay(String url) {
     if (root == null) buildOverlay();
     if (root.getParent() == null) {
@@ -445,7 +515,7 @@ public final class FloatingDshService extends Service {
     }
   }
 
-  private void hideOverlay() {
+  private void detachOverlay() {
     showing = false;
     if (root != null && root.getParent() != null) {
       try {
@@ -453,6 +523,10 @@ public final class FloatingDshService extends Service {
       } catch (Exception ignored) {
       }
     }
+  }
+
+  private void destroyOverlay() {
+    detachOverlay();
     if (webView != null) {
       webView.loadUrl("about:blank");
       webView.destroy();
@@ -627,24 +701,21 @@ public final class FloatingDshService extends Service {
   }
 
   private Notification buildNotification() {
-    Intent open = new Intent(this, MainActivity.class);
-    PendingIntent openPending = PendingIntent.getActivity(
-        this, 1, open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-    Intent hide = new Intent(this, FloatingDshService.class).setAction(ACTION_HIDE);
-    PendingIntent hidePending = PendingIntent.getService(
-        this, 2, hide, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+    Intent toggle = new Intent(this, FloatingDshService.class).setAction(ACTION_TOGGLE);
+    PendingIntent togglePending = PendingIntent.getService(
+        this, 1, toggle, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
     Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
         ? new Notification.Builder(this, CHANNEL_ID)
         : new Notification.Builder(this);
     return builder
         .setSmallIcon(R.drawable.ic_launcher)
         .setContentTitle("DSH floating UI")
-        .setContentText("Conversation and approvals while DSH controls the phone")
-        .setContentIntent(openPending)
+        .setContentText("Tap to show or hide the floating DSH window")
+        .setContentIntent(togglePending)
         .setOngoing(true)
         .addAction(new Notification.Action.Builder(
             android.graphics.drawable.Icon.createWithResource(this, R.drawable.ic_launcher),
-            "Hide", hidePending).build())
+            "Show/Hide", togglePending).build())
         .build();
   }
 
