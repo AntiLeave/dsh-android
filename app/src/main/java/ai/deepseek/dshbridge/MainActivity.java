@@ -1,13 +1,16 @@
 package ai.deepseek.dshbridge;
 
+import android.Manifest;
 import android.app.Activity;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.graphics.Insets;
 import android.graphics.Typeface;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.text.InputType;
@@ -40,6 +43,7 @@ public final class MainActivity extends Activity {
   private Button startShizuku;
   private Button stopDsh;
   private Button openDsh;
+  private Button floatingDsh;
   private Button copyUrl;
   private Button testBridge;
   private EditText hostInput;
@@ -159,6 +163,16 @@ public final class MainActivity extends Activity {
     });
     root.addView(openDsh, matchWrap());
 
+    floatingDsh = new Button(this);
+    floatingDsh.setText("Show floating DSH");
+    floatingDsh.setOnClickListener(new View.OnClickListener() {
+      @Override
+      public void onClick(View view) {
+        toggleFloatingDsh();
+      }
+    });
+    root.addView(floatingDsh, matchWrap());
+
     Button accessibility = new Button(this);
     accessibility.setText("Open accessibility settings");
     accessibility.setOnClickListener(new View.OnClickListener() {
@@ -208,6 +222,12 @@ public final class MainActivity extends Activity {
     refreshStatus();
   }
 
+  @Override
+  protected void onResume() {
+    super.onResume();
+    updateFloatingButton();
+  }
+
   private void startRootDsh() {
     final String host = readHost();
     if (host == null) return;
@@ -248,6 +268,7 @@ public final class MainActivity extends Activity {
                   .putString(PREF_MODE, dshMode)
                   .apply();
               status.setText(lastLog.isEmpty() ? url : lastLog);
+              if (FloatingDshService.isShowing()) FloatingDshService.show(MainActivity.this, dshUrl);
             }
             updateDshButtons();
           }
@@ -298,6 +319,7 @@ public final class MainActivity extends Activity {
                   .apply();
               status.setText(lastLog.isEmpty()
                   ? "dsh is running through Shizuku/Termux.\n" + dshUrl : lastLog);
+              if (FloatingDshService.isShowing()) FloatingDshService.show(MainActivity.this, dshUrl);
             }
             updateDshButtons();
           }
@@ -344,6 +366,7 @@ public final class MainActivity extends Activity {
       dshMode = "";
       lastLog = "";
       preferences.edit().remove(PREF_URL).remove(PREF_MODE).apply();
+      if (FloatingDshService.isShowing()) FloatingDshService.hide(this);
       status.setText("dsh stopped.");
     }
     updateDshButtons();
@@ -387,6 +410,46 @@ public final class MainActivity extends Activity {
     }
   }
 
+  private void toggleFloatingDsh() {
+    if (FloatingDshService.isShowing()) {
+      FloatingDshService.hide(this);
+      updateFloatingButton();
+      Toast.makeText(this, "Floating DSH hidden", Toast.LENGTH_SHORT).show();
+      return;
+    }
+    if (dshUrl.isEmpty()) {
+      status.setText("No DSH Web UI URL yet. Start DSH first.");
+      return;
+    }
+    if (!Settings.canDrawOverlays(this)) {
+      status.setText("Grant display over other apps, then tap Show floating DSH again.");
+      try {
+        Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+            Uri.parse("package:" + getPackageName()));
+        startActivity(intent);
+      } catch (Exception error) {
+        startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION));
+      }
+      return;
+    }
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+        && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+        != PackageManager.PERMISSION_GRANTED) {
+      requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 4102);
+    }
+    FloatingDshService.show(this, dshUrl);
+    floatingDsh.setText("Hide floating DSH");
+    floatingDsh.setEnabled(true);
+    Toast.makeText(this, "Floating DSH shown", Toast.LENGTH_SHORT).show();
+  }
+
+  private void updateFloatingButton() {
+    if (floatingDsh == null) return;
+    boolean running = FloatingDshService.isShowing();
+    floatingDsh.setText(running ? "Hide floating DSH" : "Show floating DSH");
+    floatingDsh.setEnabled(running || (!dshBusy && !dshUrl.isEmpty()));
+  }
+
   private void copyWebUiUrl() {
     if (dshUrl.isEmpty()) {
       status.setText("No DSH Web UI URL yet. Start DSH first.");
@@ -416,6 +479,7 @@ public final class MainActivity extends Activity {
     portInput.setEnabled(!dshBusy);
     copyUrl.setEnabled(!dshBusy && !dshUrl.isEmpty());
     openDsh.setEnabled(!dshBusy && !dshUrl.isEmpty());
+    updateFloatingButton();
   }
 
   private static void applySystemBars(final View view) {

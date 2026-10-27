@@ -113,8 +113,10 @@ public final class BridgeService extends AccessibilityService {
   @Override
   public void onAccessibilityEvent(AccessibilityEvent event) {
     lastEventAt = SystemClock.elapsedRealtime();
+    String eventPackage = safe(event.getPackageName());
+    if (getPackageName().equals(eventPackage)) return;
     int displayId = event.getDisplayId();
-    if (event.getPackageName() != null) currentPackage = event.getPackageName().toString();
+    if (!eventPackage.isEmpty()) currentPackage = eventPackage;
     if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
         && event.getClassName() != null) {
       String activity = event.getClassName().toString();
@@ -504,20 +506,25 @@ public final class BridgeService extends AccessibilityService {
     SparseArray<List<AccessibilityWindowInfo>> windowsByDisplay = getWindowsOnAllDisplays();
     List<AccessibilityWindowInfo> windows = windowsByDisplay.get(displayId);
     if (windows == null) {
-      if (displayId == Display.DEFAULT_DISPLAY) return getRootInActiveWindow();
-      return null;
+      if (displayId != Display.DEFAULT_DISPLAY) return null;
+      AccessibilityNodeInfo root = getRootInActiveWindow();
+      return root != null && !isOwnWindow(root) ? root : null;
     }
     for (AccessibilityWindowInfo window : windows) {
       if (window.isActive() || window.isFocused()) {
         AccessibilityNodeInfo candidate = window.getRoot();
-        if (candidate != null) return candidate;
+        if (candidate != null && !isOwnWindow(candidate)) return candidate;
       }
     }
     for (int i = windows.size() - 1; i >= 0; i--) {
       AccessibilityNodeInfo candidate = windows.get(i).getRoot();
-      if (candidate != null) return candidate;
+      if (candidate != null && !isOwnWindow(candidate)) return candidate;
     }
     return null;
+  }
+
+  private boolean isOwnWindow(AccessibilityNodeInfo root) {
+    return getPackageName().equals(safe(root.getPackageName()));
   }
 
   private JSONArray windowList(int displayId) throws JSONException {
@@ -526,6 +533,8 @@ public final class BridgeService extends AccessibilityService {
     List<AccessibilityWindowInfo> windows = windowsByDisplay.get(displayId);
     if (windows == null) return array;
     for (AccessibilityWindowInfo window : windows) {
+      AccessibilityNodeInfo root = window.getRoot();
+      if (root != null && isOwnWindow(root)) continue;
       JSONObject item = new JSONObject();
       Rect bounds = new Rect();
       window.getBoundsInScreen(bounds);
