@@ -9,6 +9,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.content.res.Configuration;
+import android.view.ContextThemeWrapper;
+import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
 import android.graphics.drawable.GradientDrawable;
@@ -53,6 +55,7 @@ public final class FloatingDshService extends Service {
   private ImageView closeButton;
   private ImageView resizeHandle;
   private WebView webView;
+  private View loadingCover;
   private String currentUrl = "";
   private boolean expanded;
   private boolean fullscreen;
@@ -124,19 +127,28 @@ public final class FloatingDshService extends Service {
     super.onDestroy();
   }
 
+  private boolean isDark() {
+    return (getResources().getConfiguration().uiMode
+        & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
+  }
+
   private void applyWebTheme() {
     if (webView == null) return;
-    boolean dark = (getResources().getConfiguration().uiMode
-        & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
+    boolean dark = isDark();
     WebSettings settings = webView.getSettings();
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
       settings.setAlgorithmicDarkeningAllowed(dark);
-    } else {
-      settings.setForceDark(dark ? WebSettings.FORCE_DARK_ON : WebSettings.FORCE_DARK_OFF);
     }
-    webView.setBackgroundColor(getColor(R.color.webview_background));
+    settings.setForceDark(dark ? WebSettings.FORCE_DARK_ON : WebSettings.FORCE_DARK_OFF);
+    webView.setBackgroundColor(dark
+        ? Color.parseColor("#151517") : Color.parseColor("#FFFFFF"));
     applyChromeTheme();
-    String script = "(function(){var dark=" + dark + ";"
+    String background = dark ? "#151517" : "#ffffff";
+    String script = "(function(){var dark=" + dark + ";var bg='" + background + "';"
+        + "var style=document.getElementById('dsh-overlay-theme');"
+        + "if(!style){style=document.createElement('style');style.id='dsh-overlay-theme';"
+        + "(document.head||document.documentElement).appendChild(style);}"
+        + "style.textContent='html,body{background-color:'+bg+' !important;color-scheme:'+(dark?'dark':'light')+' !important;}';"
         + "document.documentElement.style.colorScheme=dark?'dark':'light';"
         + "if(document.body)document.body.toggleAttribute('data-ds-dark-theme',dark);})()";
     webView.evaluateJavascript(script, null);
@@ -151,6 +163,10 @@ public final class FloatingDshService extends Service {
     if (minimizeButton != null) minimizeButton.setColorFilter(getColor(R.color.label_color));
     if (closeButton != null) closeButton.setColorFilter(getColor(R.color.label_color));
     if (resizeHandle != null) resizeHandle.setColorFilter(getColor(R.color.label_color));
+    if (loadingCover != null) {
+      loadingCover.setBackgroundColor(isDark()
+          ? Color.parseColor("#151517") : Color.parseColor("#FFFFFF"));
+    }
   }
 
   @Override
@@ -243,8 +259,13 @@ public final class FloatingDshService extends Service {
     panel.addView(header, new LinearLayout.LayoutParams(
         LinearLayout.LayoutParams.MATCH_PARENT, dp(52)));
 
-    webView = new WebView(this);
-    webView.setBackgroundColor(getColor(R.color.webview_background));
+    Configuration webConfig = new Configuration(getResources().getConfiguration());
+    webConfig.uiMode = (webConfig.uiMode & ~Configuration.UI_MODE_NIGHT_MASK)
+        | (isDark() ? Configuration.UI_MODE_NIGHT_YES : Configuration.UI_MODE_NIGHT_NO);
+    Context webContext = new ContextThemeWrapper(
+        createConfigurationContext(webConfig), R.style.AppTheme);
+    webView = new WebView(webContext);
+    webView.setBackgroundColor(isDark() ? Color.parseColor("#151517") : Color.parseColor("#FFFFFF"));
     WebSettings settings = webView.getSettings();
     settings.setJavaScriptEnabled(true);
     settings.setDomStorageEnabled(true);
@@ -259,8 +280,20 @@ public final class FloatingDshService extends Service {
     cookies.setAcceptThirdPartyCookies(webView, true);
     webView.setWebViewClient(new WebViewClient() {
       @Override
+      public void onPageStarted(WebView view, String url, Bitmap favicon) {
+        if (loadingCover != null) loadingCover.setVisibility(View.VISIBLE);
+      }
+
+      @Override
+      public void onPageCommitVisible(WebView view, String url) {
+        if (loadingCover != null) loadingCover.setVisibility(View.GONE);
+      }
+
+      @Override
       public void onPageFinished(WebView view, String url) {
         applyWebTheme();
+        if (loadingCover != null) loadingCover.setVisibility(View.GONE);
+        view.setVisibility(View.VISIBLE);
       }
 
       @Override
@@ -276,7 +309,15 @@ public final class FloatingDshService extends Service {
         return true;
       }
     });
-    panel.addView(webView, new LinearLayout.LayoutParams(
+    FrameLayout webContainer = new FrameLayout(this);
+    webContainer.addView(webView, new FrameLayout.LayoutParams(
+        FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+    loadingCover = new View(this);
+    loadingCover.setBackgroundColor(isDark()
+        ? Color.parseColor("#151517") : Color.parseColor("#FFFFFF"));
+    webContainer.addView(loadingCover, new FrameLayout.LayoutParams(
+        FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+    panel.addView(webContainer, new LinearLayout.LayoutParams(
         LinearLayout.LayoutParams.MATCH_PARENT, 0, 1));
 
     root.addView(panel, new FrameLayout.LayoutParams(
@@ -359,6 +400,7 @@ public final class FloatingDshService extends Service {
     panel = null;
     bubble = null;
     resizeHandle = null;
+    loadingCover = null;
   }
 
   private void setExpanded(boolean value) {
