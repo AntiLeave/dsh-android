@@ -35,6 +35,7 @@ import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 
 public final class FloatingDshService extends Service {
@@ -57,7 +58,9 @@ public final class FloatingDshService extends Service {
   private FrameLayout root;
   private LinearLayout panel;
   private LinearLayout header;
-  private ImageView bubble;
+  private FrameLayout bubble;
+  private ImageView bubbleIcon;
+  private ProgressBar bubbleProgress;
   private TextView title;
   private TextView subtitle;
   private ImageView fullButton;
@@ -204,9 +207,11 @@ public final class FloatingDshService extends Service {
   private void installAutoOpenObserver() {
     if (webView == null) return;
     String script = "(function(){if(window.__dshAutoOpen)return;window.__dshAutoOpen=true;"
-        + "var lastApproval=false,lastRunning=false,scheduled=false;"
+        + "var lastApproval=false,lastRunning=false,lastState='',scheduled=false;"
         + "function check(){scheduled=false;var approval=!!document.querySelector('[data-approval-key]:not([hidden])');"
         + "var running=!!document.querySelector('[data-chat-running]:not([hidden])');"
+        + "var state=running?'working':'idle';"
+        + "if(state!==lastState){try{DshFloating.onState(state);}catch(e){}lastState=state;}"
         + "if(approval&&!lastApproval){try{DshFloating.onApproval();}catch(e){}}"
         + "if(lastApproval&&!approval){try{DshFloating.onApprovalResolved();}catch(e){}}"
         + "if(lastRunning&&!running){try{DshFloating.onThinkingEnd();}catch(e){}}"
@@ -249,6 +254,16 @@ public final class FloatingDshService extends Service {
     @JavascriptInterface
     public void onApprovalResolved() {
       autoHideAfterApproval();
+    }
+
+    @JavascriptInterface
+    public void onState(final String state) {
+      new Handler(Looper.getMainLooper()).post(new Runnable() {
+        @Override
+        public void run() {
+          setBubbleState(state);
+        }
+      });
     }
 
     @JavascriptInterface
@@ -429,13 +444,26 @@ public final class FloatingDshService extends Service {
     root.addView(panel, new FrameLayout.LayoutParams(
         FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
-    bubble = new ImageView(this);
-    bubble.setImageResource(R.drawable.deepseek_favicon);
-    bubble.setScaleType(ImageView.ScaleType.FIT_CENTER);
-    bubble.setPadding(dp(9), dp(9), dp(9), dp(9));
+    bubble = new FrameLayout(this);
     bubble.setBackground(rounded(Color.parseColor("#FAFAFC"), bubbleSizeDp / 2));
     bubble.setContentDescription("Open DSH floating conversation");
     bubble.setOnTouchListener(new DragListener(true));
+
+    bubbleIcon = new ImageView(this);
+    bubbleIcon.setImageResource(R.drawable.deepseek_favicon);
+    bubbleIcon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+    bubbleIcon.setPadding(dp(9), dp(9), dp(9), dp(9));
+    bubble.addView(bubbleIcon, new FrameLayout.LayoutParams(
+        FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+
+    bubbleProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleSmall);
+    bubbleProgress.setIndeterminate(true);
+    bubbleProgress.setVisibility(View.GONE);
+    bubbleProgress.getIndeterminateDrawable().setTint(Color.parseColor("#5686FE"));
+    FrameLayout.LayoutParams progressParams = new FrameLayout.LayoutParams(
+        dp(22), dp(22), Gravity.CENTER);
+    bubble.addView(bubbleProgress, progressParams);
+
     root.addView(bubble, new FrameLayout.LayoutParams(bubbleSize, bubbleSize));
 
     resizeHandle = new ImageView(this);
@@ -478,6 +506,15 @@ public final class FloatingDshService extends Service {
         bubble.setLayoutParams(params);
       }
       bubble.setBackground(rounded(Color.parseColor("#FAFAFC"), bubbleSizeDp / 2));
+      if (bubbleProgress != null) {
+        FrameLayout.LayoutParams progress = (FrameLayout.LayoutParams) bubbleProgress.getLayoutParams();
+        if (progress != null) {
+          int size = dp(Math.max(16, bubbleSizeDp / 3));
+          progress.width = size;
+          progress.height = size;
+          bubbleProgress.setLayoutParams(progress);
+        }
+      }
     }
     if (windowParams == null) return;
     bubbleX = clamp(bubbleX, 0, Math.max(0, screenWidth() - bubbleSize));
@@ -491,6 +528,13 @@ public final class FloatingDshService extends Service {
         windowManager.updateViewLayout(root, windowParams);
       }
     }
+  }
+
+  private void setBubbleState(String state) {
+    if (bubbleIcon == null || bubbleProgress == null) return;
+    boolean working = "working".equals(state);
+    bubbleIcon.setVisibility(working ? View.GONE : View.VISIBLE);
+    bubbleProgress.setVisibility(working ? View.VISIBLE : View.GONE);
   }
 
   private void showOverlay(String url) {
