@@ -61,6 +61,7 @@ public final class FloatingDshService extends Service {
   private LinearLayout header;
   private FrameLayout bubble;
   private ImageView bubbleIcon;
+  private ImageView bubbleAlert;
   private ProgressBar bubbleProgress;
   private TextView title;
   private TextView subtitle;
@@ -211,7 +212,8 @@ public final class FloatingDshService extends Service {
         + "var lastApproval=false,lastRunning=false,lastState='',scheduled=false;"
         + "function check(){scheduled=false;var approval=!!document.querySelector('[data-approval-key]:not([hidden])');"
         + "var running=!!document.querySelector('[data-chat-running]:not([hidden])');"
-        + "var state=running?'working':'idle';"
+        + "var attention=approval||!!document.querySelector('[data-question-key]:not([hidden])');"
+        + "var state=attention?'attention':(running?'working':'idle');"
         + "if(state!==lastState){try{DshFloating.onState(state);}catch(e){}lastState=state;}"
         + "if(approval&&!lastApproval){try{DshFloating.onApproval();}catch(e){}}"
         + "if(lastApproval&&!approval){try{DshFloating.onApprovalResolved();}catch(e){}}"
@@ -458,6 +460,14 @@ public final class FloatingDshService extends Service {
     bubble.addView(bubbleIcon, new FrameLayout.LayoutParams(
         FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
+    bubbleAlert = new ImageView(this);
+    bubbleAlert.setImageResource(R.drawable.ic_alert);
+    bubbleAlert.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+    bubbleAlert.setPadding(dp(10), dp(10), dp(10), dp(10));
+    bubbleAlert.setVisibility(View.GONE);
+    bubble.addView(bubbleAlert, new FrameLayout.LayoutParams(
+        FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+
     bubbleProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleSmall);
     bubbleProgress.setIndeterminate(true);
     bubbleProgress.setVisibility(View.GONE);
@@ -508,6 +518,10 @@ public final class FloatingDshService extends Service {
         bubble.setLayoutParams(params);
       }
       bubble.setBackground(rounded(Color.parseColor("#FAFAFC"), bubbleSizeDp / 2));
+      if (bubbleAlert != null) {
+        int pad = dp(Math.max(6, bubbleSizeDp / 6));
+        bubbleAlert.setPadding(pad, pad, pad, pad);
+      }
       if (bubbleProgress != null) {
         FrameLayout.LayoutParams progress = (FrameLayout.LayoutParams) bubbleProgress.getLayoutParams();
         if (progress != null) {
@@ -533,9 +547,11 @@ public final class FloatingDshService extends Service {
   }
 
   private void setBubbleState(String state) {
-    if (bubbleIcon == null || bubbleProgress == null) return;
+    if (bubbleIcon == null || bubbleAlert == null || bubbleProgress == null) return;
+    boolean attention = "attention".equals(state);
     boolean working = "working".equals(state);
-    bubbleIcon.setVisibility(working ? View.GONE : View.VISIBLE);
+    bubbleIcon.setVisibility(attention || working ? View.GONE : View.VISIBLE);
+    bubbleAlert.setVisibility(attention ? View.VISIBLE : View.GONE);
     bubbleProgress.setVisibility(working ? View.VISIBLE : View.GONE);
   }
 
