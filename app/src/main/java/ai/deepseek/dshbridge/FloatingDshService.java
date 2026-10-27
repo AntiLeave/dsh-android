@@ -809,11 +809,22 @@ public final class FloatingDshService extends Service {
 
   private final class DragListener implements View.OnTouchListener {
     private final boolean tapToExpand;
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private final Runnable longPress = new Runnable() {
+      @Override
+      public void run() {
+        if (!moved && !expanded && root != null) {
+          longPressed = true;
+          detachOverlay();
+        }
+      }
+    };
     private float downX;
     private float downY;
     private int startX;
     private int startY;
     private boolean moved;
+    private boolean longPressed;
 
     DragListener(boolean tapToExpand) {
       this.tapToExpand = tapToExpand;
@@ -828,11 +839,16 @@ public final class FloatingDshService extends Service {
           startX = windowParams.x;
           startY = windowParams.y;
           moved = false;
+          longPressed = false;
+          if (tapToExpand) handler.postDelayed(longPress, 1000);
           return true;
         case MotionEvent.ACTION_MOVE:
           float dx = event.getRawX() - downX;
           float dy = event.getRawY() - downY;
-          if (!moved && Math.hypot(dx, dy) > touchSlop) moved = true;
+          if (!moved && Math.hypot(dx, dy) > touchSlop) {
+            moved = true;
+            handler.removeCallbacks(longPress);
+          }
           if (moved) {
             int x = clamp(startX + Math.round(dx), 0, screenWidth() - windowParams.width);
             int y = clamp(startY + Math.round(dy), 0, screenHeight() - windowParams.height);
@@ -844,7 +860,11 @@ public final class FloatingDshService extends Service {
           }
           return true;
         case MotionEvent.ACTION_UP:
-          if (!moved && tapToExpand && !expanded) setExpanded(true);
+          handler.removeCallbacks(longPress);
+          if (!moved && !longPressed && tapToExpand && !expanded) setExpanded(true);
+          return true;
+        case MotionEvent.ACTION_CANCEL:
+          handler.removeCallbacks(longPress);
           return true;
         default:
           return false;
