@@ -16,7 +16,9 @@ import android.graphics.PixelFormat;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.util.DisplayMetrics;
 import android.view.Gravity;
 import android.view.MotionEvent;
@@ -25,6 +27,7 @@ import android.view.ViewConfiguration;
 import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.webkit.CookieManager;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -154,6 +157,42 @@ public final class FloatingDshService extends Service {
     webView.evaluateJavascript(script, null);
   }
 
+  private void installAutoOpenObserver() {
+    if (webView == null) return;
+    String script = "(function(){if(window.__dshAutoOpen)return;window.__dshAutoOpen=true;"
+        + "var lastApproval=false,lastRunning=false,scheduled=false;"
+        + "function check(){scheduled=false;var approval=!!document.querySelector('[data-approval-key]:not([hidden])');"
+        + "var running=!!document.querySelector('[data-chat-running]:not([hidden])');"
+        + "if(approval&&!lastApproval){try{DshFloating.onApproval();}catch(e){}}"
+        + "if(lastRunning&&!running){try{DshFloating.onThinkingEnd();}catch(e){}}"
+        + "lastApproval=approval;lastRunning=running;}"
+        + "function schedule(){if(scheduled)return;scheduled=true;setTimeout(check,50);}"
+        + "new MutationObserver(schedule).observe(document.body,{subtree:true,childList:true,attributes:true,characterData:true});"
+        + "check();})()";
+    webView.evaluateJavascript(script, null);
+  }
+
+  private void autoOpen() {
+    new Handler(Looper.getMainLooper()).post(new Runnable() {
+      @Override
+      public void run() {
+        if (!expanded && root != null) setExpanded(true);
+      }
+    });
+  }
+
+  private final class AutoOpenBridge {
+    @JavascriptInterface
+    public void onApproval() {
+      autoOpen();
+    }
+
+    @JavascriptInterface
+    public void onThinkingEnd() {
+      autoOpen();
+    }
+  }
+
   private void applyChromeTheme() {
     if (panel != null) panel.setBackground(rounded(getColor(R.color.app_background), 18));
     if (header != null) header.setBackgroundColor(getColor(R.color.terminal_background));
@@ -274,6 +313,7 @@ public final class FloatingDshService extends Service {
     settings.setUseWideViewPort(true);
     settings.setSupportZoom(false);
     settings.setBuiltInZoomControls(false);
+    webView.addJavascriptInterface(new AutoOpenBridge(), "DshFloating");
     applyWebTheme();
     CookieManager cookies = CookieManager.getInstance();
     cookies.setAcceptCookie(true);
@@ -292,6 +332,7 @@ public final class FloatingDshService extends Service {
       @Override
       public void onPageFinished(WebView view, String url) {
         applyWebTheme();
+        installAutoOpenObserver();
         if (loadingCover != null) loadingCover.setVisibility(View.GONE);
         view.setVisibility(View.VISIBLE);
       }
