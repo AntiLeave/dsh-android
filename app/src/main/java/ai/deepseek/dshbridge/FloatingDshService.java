@@ -481,9 +481,6 @@ public final class FloatingDshService extends Service {
       applyPanelBounds();
       windowParams.flags &= ~WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
     } else {
-      fullscreen = false;
-      if (fullButton != null) setFullButtonState(false);
-      if (subtitle != null) subtitle.setText("floating conversation");
       windowParams.width = bubbleSize;
       windowParams.height = bubbleSize;
       windowParams.x = clamp(bubbleX, 0, screenWidth() - bubbleSize);
