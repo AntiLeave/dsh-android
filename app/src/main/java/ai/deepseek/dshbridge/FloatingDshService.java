@@ -62,6 +62,7 @@ public final class FloatingDshService extends Service {
   private String currentUrl = "";
   private boolean expanded;
   private boolean fullscreen;
+  private boolean autoOpenedForApproval;
   private int bubbleSize;
   private int panelWidth;
   private int panelHeight;
@@ -164,6 +165,7 @@ public final class FloatingDshService extends Service {
         + "function check(){scheduled=false;var approval=!!document.querySelector('[data-approval-key]:not([hidden])');"
         + "var running=!!document.querySelector('[data-chat-running]:not([hidden])');"
         + "if(approval&&!lastApproval){try{DshFloating.onApproval();}catch(e){}}"
+        + "if(lastApproval&&!approval){try{DshFloating.onApprovalResolved();}catch(e){}}"
         + "if(lastRunning&&!running){try{DshFloating.onThinkingEnd();}catch(e){}}"
         + "lastApproval=approval;lastRunning=running;}"
         + "function schedule(){if(scheduled)return;scheduled=true;setTimeout(check,50);}"
@@ -172,11 +174,25 @@ public final class FloatingDshService extends Service {
     webView.evaluateJavascript(script, null);
   }
 
-  private void autoOpen() {
+  private void autoOpen(final boolean forApproval) {
     new Handler(Looper.getMainLooper()).post(new Runnable() {
       @Override
       public void run() {
-        if (!expanded && root != null) setExpanded(true);
+        if (!expanded && root != null) {
+          setExpanded(true);
+          autoOpenedForApproval = forApproval;
+        }
+      }
+    });
+  }
+
+  private void autoHideAfterApproval() {
+    new Handler(Looper.getMainLooper()).post(new Runnable() {
+      @Override
+      public void run() {
+        if (!autoOpenedForApproval) return;
+        autoOpenedForApproval = false;
+        if (expanded) setExpanded(false);
       }
     });
   }
@@ -184,12 +200,17 @@ public final class FloatingDshService extends Service {
   private final class AutoOpenBridge {
     @JavascriptInterface
     public void onApproval() {
-      autoOpen();
+      autoOpen(true);
+    }
+
+    @JavascriptInterface
+    public void onApprovalResolved() {
+      autoHideAfterApproval();
     }
 
     @JavascriptInterface
     public void onThinkingEnd() {
-      autoOpen();
+      autoOpen(false);
     }
   }
 
